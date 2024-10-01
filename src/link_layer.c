@@ -1,5 +1,7 @@
 // Link layer protocol implementation
 
+#include <stdio.h>
+
 #include "link_layer.h"
 #include "serial_port.h"
 
@@ -21,16 +23,21 @@ typedef enum {
     STATE_FLAG_RCV,
     STATE_ADDRESS_RCV,
     STATE_CONTROL_RCV,
-    STATE_BCC_RCV,
+    STATE_BCC_OK,
     STATE_STOP
 } State;
 
 static int llreceiveFrame(unsigned char *frame) {
     State state = STATE_START;
+    unsigned char BCC;
     
     while (state != STATE_STOP)  {
         unsigned char byte;
-        readByteSerialPort(&byte);        
+        
+        // ensure there were no errors reading the byte
+        if (readByteSerialPort(&byte) <= 0) {
+            continue;
+        }
 
         switch (state) {
             case STATE_START:
@@ -45,7 +52,7 @@ static int llreceiveFrame(unsigned char *frame) {
                 switch (byte) {
                     case ADDRESS_TX_SEND:
                     case ADDRESS_RX_SEND:
-                        frame[0] = byte;
+                        BCC = frame[0] = byte;
                         state = STATE_ADDRESS_RCV;
 
                         break;
@@ -64,7 +71,7 @@ static int llreceiveFrame(unsigned char *frame) {
                 switch (byte) {
                     case CONTROL_SET:
                     case CONTROL_UA:
-                        frame[1] = byte;
+                        BCC ^= frame[1] = byte;
                         state = STATE_CONTROL_RCV;
 
                         break;
@@ -79,8 +86,28 @@ static int llreceiveFrame(unsigned char *frame) {
 
                 break;
 
-            //case STATE_CONTROL_RCV:
-                
+            case STATE_CONTROL_RCV:
+                // verify if the byte equals the BCC
+                if (byte == BCC) {
+                    state = STATE_BCC_OK;
+                }
+                else if (byte == FLAG) {
+                    state = STATE_FLAG_RCV;                
+                }
+                else {
+                    state = STATE_START;                
+                }
+
+                break;
+            
+            case STATE_BCC_OK:
+                state = (byte == FLAG)
+                    ? STATE_STOP
+                    : STATE_START;
+            
+            // unused but prevents compilation warnings
+            default:
+                break;
         }
     }
 
@@ -92,27 +119,41 @@ static int llreceiveFrame(unsigned char *frame) {
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
-    if (openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate) < 0)
+    if (openSerialPort(connectionParameters.serialPort,
+                       connectionParameters.baudRate) < 0)
     {
         return -1;
     }
 
-    // TODO
+    // establish communication with the other PC
     unsigned char frame[5];
     
     if (connectionParameters.role == LlTx) {
+        // send the SET frame
         frame[0] = frame[4] = FLAG;
         frame[1] = ADDRESS_TX_SEND;
         frame[2] = CONTROL_SET;
         frame[3] = frame[1] ^ frame[2];
-
+        
         writeBytesSerialPort(frame, 5);
+
+        // receive the UA frame
+        llreceiveFrame(frame);
     }
     else {
+       // receive the SET frame
+       llreceiveFrame(frame);
+
+       // send the UA frame
+       frame[0] = frame[4] = FLAG;
+       frame[1] = ADDRESS_TX_SEND;
+       frame[2] = CONTROL_UA;
+       frame[3] = frame[1] ^ frame[2];
         
-
+       writeBytesSerialPort(frame, 5);
     }
-
+    
+    printf("\e[0;32mConnection established!\e[0;37m\n");
     return 1;
 }
 
