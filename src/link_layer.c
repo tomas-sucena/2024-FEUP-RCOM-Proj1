@@ -27,6 +27,19 @@ typedef enum {
     STATE_STOP
 } State;
 
+static int sendFrame(unsigned char address, unsigned char control) {
+    // initialize and configure the frame
+    unsigned char frame[5];
+    
+    frame[0] = frame[4] = FLAG;
+    frame[1] = address;
+    frame[2] = control;
+    frame[3] = address ^ control;
+    
+    // send the frame
+    return writeBytesSerialPort(frame, 5);
+}
+
 static int receiveFrame(unsigned char address, unsigned char control, unsigned char *frame) {
     State state = STATE_START;
     const unsigned char BCC = address ^ control; // the expected BCC
@@ -100,31 +113,19 @@ int llopen(LinkLayer connectionParameters)
     }
 
     // establish communication with the other PC
-    unsigned char frame[5];
-    
     if (connectionParameters.role == LlTx) {
         // send the SET frame
-        frame[0] = frame[4] = FLAG;
-        frame[1] = ADDRESS_TX_SEND;
-        frame[2] = CONTROL_SET;
-        frame[3] = frame[1] ^ frame[2];
-        
-        writeBytesSerialPort(frame, 5);
+        sendFrame(ADDRESS_TX_SEND, CONTROL_SET);
 
         // receive the UA frame
         receiveFrame(ADDRESS_TX_SEND, CONTROL_UA, NULL);
     }
     else {
         // receive the SET frame
-        receiveFrame(ADDRESS_TX_SEND, CONTROL_SET, frame);
+        receiveFrame(ADDRESS_TX_SEND, CONTROL_SET, NULL);
 
         // send the UA frame
-        frame[0] = frame[4] = FLAG;
-        frame[1] = ADDRESS_TX_SEND;
-        frame[2] = CONTROL_UA;
-        frame[3] = frame[1] ^ frame[2];
-        
-        writeBytesSerialPort(frame, 5);
+        sendFrame(ADDRESS_TX_SEND, CONTROL_UA);
     }
     
     printf("\e[0;32mConnection established!\e[0;37m\n");
