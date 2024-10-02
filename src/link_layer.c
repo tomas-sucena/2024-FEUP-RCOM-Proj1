@@ -27,10 +27,10 @@ typedef enum {
     STATE_STOP
 } State;
 
-static int llreceiveFrame(unsigned char *frame) {
+static int receiveFrame(unsigned char address, unsigned char control, unsigned char *frame) {
     State state = STATE_START;
-    unsigned char BCC;
-    
+    const unsigned char BCC = address ^ control; // the expected BCC
+
     while (state != STATE_STOP)  {
         unsigned char byte;
         
@@ -40,48 +40,20 @@ static int llreceiveFrame(unsigned char *frame) {
         }
 
         switch (state) {
-            case STATE_START:
-                if (byte == FLAG) {
-                    state = STATE_FLAG_RCV;
-                }
-
-                break;
-
             case STATE_FLAG_RCV:
-                // determine if the byte received is a valid address
-                switch (byte) {
-                    case ADDRESS_TX_SEND:
-                    case ADDRESS_RX_SEND:
-                        BCC = frame[0] = byte;
-                        state = STATE_ADDRESS_RCV;
-
-                        break;
-                    
-                    case FLAG:
-                        break;
-
-                    default:
-                        state = STATE_START;
+                // determine if the byte received is the expected address
+                if (byte == address) {
+                    state = STATE_ADDRESS_RCV;
+                    continue;
                 }
 
                 break;
 
             case STATE_ADDRESS_RCV:
-                // determine if the byte received is a valid control byte
-                switch (byte) {
-                    case CONTROL_SET:
-                    case CONTROL_UA:
-                        BCC ^= frame[1] = byte;
-                        state = STATE_CONTROL_RCV;
-
-                        break;
-
-                    case FLAG:
-                        state = STATE_FLAG_RCV;
-                        break;
-
-                    default:
-                        state = STATE_START;
+                // determine if the byte received is the expected control byte
+                if (byte == control) {
+                    state = STATE_CONTROL_RCV;
+                    continue;
                 }
 
                 break;
@@ -90,25 +62,27 @@ static int llreceiveFrame(unsigned char *frame) {
                 // verify if the byte equals the BCC
                 if (byte == BCC) {
                     state = STATE_BCC_OK;
-                }
-                else if (byte == FLAG) {
-                    state = STATE_FLAG_RCV;                
-                }
-                else {
-                    state = STATE_START;                
+                    continue;
                 }
 
                 break;
             
             case STATE_BCC_OK:
+                // verify if the byte received is the FLAG, that is,
+                // if we have reached the end of the frame
                 state = (byte == FLAG)
                     ? STATE_STOP
                     : STATE_START;
+
+                continue;
             
-            // unused but prevents compilation warnings
             default:
                 break;
         }
+
+        state = (byte == FLAG)
+            ? STATE_FLAG_RCV
+            : STATE_START;
     }
 
     return 0;
@@ -138,19 +112,19 @@ int llopen(LinkLayer connectionParameters)
         writeBytesSerialPort(frame, 5);
 
         // receive the UA frame
-        llreceiveFrame(frame);
+        receiveFrame(ADDRESS_TX_SEND, CONTROL_UA, NULL);
     }
     else {
-       // receive the SET frame
-       llreceiveFrame(frame);
+        // receive the SET frame
+        receiveFrame(ADDRESS_TX_SEND, CONTROL_SET, frame);
 
-       // send the UA frame
-       frame[0] = frame[4] = FLAG;
-       frame[1] = ADDRESS_TX_SEND;
-       frame[2] = CONTROL_UA;
-       frame[3] = frame[1] ^ frame[2];
+        // send the UA frame
+        frame[0] = frame[4] = FLAG;
+        frame[1] = ADDRESS_TX_SEND;
+        frame[2] = CONTROL_UA;
+        frame[3] = frame[1] ^ frame[2];
         
-       writeBytesSerialPort(frame, 5);
+        writeBytesSerialPort(frame, 5);
     }
     
     printf("\e[0;32mConnection established!\e[0;37m\n");
