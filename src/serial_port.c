@@ -98,7 +98,7 @@ int openSerialPort(const char *serialPort, int baudRate)
     }
 
     // Clear O_NONBLOCK flag to ensure blocking reads
-    oflags ^= O_NONBLOCK;
+    //oflags ^= O_NONBLOCK;
     if (fcntl(fd, F_SETFL, oflags) == -1)
     {
         perror("fcntl");

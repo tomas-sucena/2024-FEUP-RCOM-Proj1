@@ -1,6 +1,8 @@
 // Link layer protocol implementation
 
+#include <signal.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #include "link_layer.h"
 #include "serial_port.h"
@@ -27,6 +29,22 @@ typedef enum {
     STATE_STOP
 } State;
 
+// global variables
+_Bool isSender;
+int timeout;
+_Bool alarmIsEnabled;
+int nRetransmissions;
+
+static void handleAlarm() {
+    alarmIsEnabled = FALSE;
+}
+
+static void setAlarm(int time) {
+    (void) signal(SIGALRM, handleAlarm);
+    alarm(time);
+    alarmIsEnabled = TRUE;
+}
+
 static int sendFrame(unsigned char address, unsigned char control) {
     // initialize and configure the frame
     unsigned char frame[5];
@@ -44,7 +62,10 @@ static int receiveFrame(unsigned char address, unsigned char control, unsigned c
     State state = STATE_START;
     const unsigned char BCC = address ^ control; // the expected BCC
 
-    while (state != STATE_STOP)  {
+    // activate the alarm
+    setAlarm(timeout);
+
+    while (alarmIsEnabled && state != STATE_STOP)  {
         unsigned char byte;
         
         // ensure there were no errors reading the byte
@@ -98,7 +119,8 @@ static int receiveFrame(unsigned char address, unsigned char control, unsigned c
             : STATE_START;
     }
 
-    return 0;
+    // verify if a timeout occurred
+    return (state == STATE_STOP) ? 1 : -1;
 }
 
 ////////////////////////////////////////////////
@@ -112,22 +134,58 @@ int llopen(LinkLayer connectionParameters)
         return -1;
     }
 
+    // set the global variables
+    isSender = (connectionParameters.role == LlTx);
+    timeout = connectionParameters.timeout;
+    nRetransmissions = connectionParameters.nRetransmissions;
+
     // establish communication with the other PC
-    if (connectionParameters.role == LlTx) {
-        // send the SET frame
-        sendFrame(ADDRESS_TX_SEND, CONTROL_SET);
+    const char *otherPC = isSender ? "receiver" : "sender";
+    int attempt;
 
-        // receive the UA frame
-        receiveFrame(ADDRESS_TX_SEND, CONTROL_UA, NULL);
-    }
-    else {
-        // receive the SET frame
-        receiveFrame(ADDRESS_TX_SEND, CONTROL_SET, NULL);
+    printf("\n> Establishing communication with the %s...\n", otherPC);
 
-        // send the UA frame
-        sendFrame(ADDRESS_TX_SEND, CONTROL_UA);
+    for (attempt = 0; attempt < nRetransmissions; ++attempt) {
+        if (attempt > 0) {
+            printf("\nTrying again...\n");
+        }
+
+        if (isSender) {
+            // send the SET frame
+            if (sendFrame(ADDRESS_TX_SEND, CONTROL_SET) < 0) {
+                printf("Failed to send the SET frame!\n");
+                continue;
+            }
+
+            // receive the UA frame
+            if (receiveFrame(ADDRESS_TX_SEND, CONTROL_UA, NULL) < 0) {
+                printf("Failed to receive the UA frame!\n");
+                continue;
+            }
+        }
+        else {
+            // receive the SET frame
+            if (receiveFrame(ADDRESS_TX_SEND, CONTROL_SET, NULL) < 0) {
+                printf("Failed to receive the SET frame!\n");
+                continue;
+            }
+
+            // send the UA frame
+            if (sendFrame(ADDRESS_TX_SEND, CONTROL_UA) < 0) {
+                printf("Failed to send the UA frame!\n");
+                continue;
+            }
+        }
+
+        break;
     }
-    
+
+    // ensure communication was established
+    if (attempt == nRetransmissions) {
+        printf("Failed to establish communication with the %s!\n", otherPC);
+        return -1;
+    }
+
     printf("\e[0;32mConnection established!\e[0;37m\n");
     return 1;
 }
