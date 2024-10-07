@@ -18,4 +18,6 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     memcpy(connectionParameters.serialPort, serialPort, 50);
 
     llopen(connectionParameters);
+    sleep(3);
+    llclose(FALSE);
 }
