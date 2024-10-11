@@ -11,8 +11,4 @@
 #define BOLD    "\e[1m"
 #define FAINT   "\e[2m"
 
-extern volatile _Bool loading;
-
-void loadingScreen(const char *message);
-
 #endif // _CONSOLE_H_

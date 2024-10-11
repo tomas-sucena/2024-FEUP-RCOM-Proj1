@@ -34,15 +34,12 @@ typedef enum {
 
 /* global variables */
 // link layer
-_Bool isSender;
-int timeout;
+static _Bool isSender;
+static int timeout;
 
 // alarm
-_Bool alarmIsEnabled;
-int nRetransmissions;
-
-// loading screen
-volatile _Bool loading;
+static _Bool alarmIsEnabled;
+static int nRetransmissions;
 
 static void handleAlarm() {
     alarmIsEnabled = FALSE;
@@ -52,10 +49,6 @@ static void setAlarm(int time) {
     (void) signal(SIGALRM, handleAlarm);
     alarm(time);
     alarmIsEnabled = TRUE;
-}
-
-static void stopLoading() {
-    loading = FALSE;
 }
 
 static int sendFrame(unsigned char address, unsigned char control) {
@@ -152,55 +145,40 @@ int llopen(LinkLayer connectionParameters)
     timeout = connectionParameters.timeout;
     nRetransmissions = connectionParameters.nRetransmissions;
 
-    // create a new process to display a loading screen
-    int pid = fork(); // the process ID of the child process
-    
-    if (pid == 0) {
-        // set up a signal handler to stop the loading screen
-        signal(SIGUSR1, stopLoading);
-
-        // initialize the loading screen
-        loading = TRUE;
-        loadingScreen("\n> Establishing connection");
-
-        exit(EXIT_SUCCESS);
-    }
-    // if the child process could not be created, simply output the message
-    else if (pid < 0) {
-        printf("\n> Establishing connection...\n");
-    }
-
     // establish communication with the other PC
     int attempt;
+    const char *otherPC = isSender ? "receiver" : "sender";
+
+    printf("\n> Establishing connection with the %s...\n", otherPC);
 
     for (attempt = 0; attempt < nRetransmissions; ++attempt) {
         if (attempt > 0) {
-            //printf(" Trying again...\n");
+            printf(" Trying again...\n");
         }
 
         if (isSender) {
             // send the SET frame
             if (sendFrame(ADDRESS_TX_SEND, CONTROL_SET) < 0) {
-                //printf(FAINT "Failed to send the SET frame!");
+                printf(FAINT "Failed to send the SET frame.");
                 continue;
             }
 
             // receive the UA frame
             if (receiveFrame(ADDRESS_TX_SEND, CONTROL_UA, NULL) < 0) {
-                //printf(FAINT "  Failed to receive the UA frame!");
+                printf(FAINT "Failed to receive the UA frame.");
                 continue;
             }
         }
         else {
             // receive the SET frame
             if (receiveFrame(ADDRESS_TX_SEND, CONTROL_SET, NULL) < 0) {
-                //printf(FAINT "  Failed to receive the SET frame!");
+                printf(FAINT "Failed to receive the SET frame.");
                 continue;
             }
 
             // send the UA frame
             if (sendFrame(ADDRESS_TX_SEND, CONTROL_UA) < 0) {
-                //printf(FAINT "  Failed to send the UA frame!");
+                printf(FAINT "Failed to send the UA frame.");
                 continue;
             }
         }
@@ -208,21 +186,13 @@ int llopen(LinkLayer connectionParameters)
         break;
     }
 
-    // terminate the loading screen
-    if (pid > 0) {
-        kill(pid, SIGUSR1);
-        wait(NULL);
-    }
-
     // ensure communication was established
-    const char *otherPC = isSender ? "receiver" : "sender";
-
     if (attempt == nRetransmissions) {
-        printf(RED "  Failed to establish connection with the %s!\n" RESET, otherPC);
+        printf(RED "\nError! Failed to connect to the %s.\n" RESET, otherPC);
         return -1;
     }
 
-    printf(GREEN "  Connection established!\n" RESET);
+    printf(GREEN "Success!\n" RESET);
     return 1;
 }
 
@@ -251,10 +221,8 @@ int llread(unsigned char *packet)
 ////////////////////////////////////////////////
 int llclose(int showStatistics){
     // end communication with the other PC
-    const char *otherPC = isSender ? "receiver" : "sender";
     int attempt;
-
-    printf("\n> Terminating the connection with the %s...\n", otherPC);
+    printf("\n> Disconnecting...\n");
 
     for (attempt = 0; attempt < nRetransmissions; ++attempt) {
         if (attempt > 0) {
@@ -264,38 +232,38 @@ int llclose(int showStatistics){
         if (isSender) {
             // send the DISC frame
             if (sendFrame(ADDRESS_TX_SEND, CONTROL_DISC) < 0) {
-                printf(FAINT "  Failed to send the DISC frame!" RESET);
+                printf(FAINT "Failed to send the DISC frame!" RESET);
                 continue;
             }
 
             // receive the receiver's DISC frame
             if (receiveFrame(ADDRESS_RX_SEND, CONTROL_DISC, NULL) < 0) {
-                printf(FAINT "  Failed to receive the receiver's DISC frame!" RESET);
+                printf(FAINT "Failed to receive the receiver's DISC frame!" RESET);
                 continue;
             }
 
             // send the UA frame
             if (sendFrame(ADDRESS_RX_SEND, CONTROL_UA) < 0) {
-                printf(FAINT "  Failed to send the UA frame!" RESET);
+                printf(FAINT "Failed to send the UA frame!" RESET);
                 continue;
             }
         }
         else {
             // receive the sender's DISC frame
             if (receiveFrame(ADDRESS_TX_SEND, CONTROL_DISC, NULL) < 0) {
-                printf(FAINT "  Failed to receive the sender's DISC frame!" RESET);
+                printf(FAINT "Failed to receive the sender's DISC frame!" RESET);
                 continue;
             }
 
             // send the DISC frame
             if (sendFrame(ADDRESS_RX_SEND, CONTROL_DISC) < 0) {
-                printf(FAINT "  Failed to send the DISC frame!" RESET);
+                printf(FAINT "Failed to send the DISC frame!" RESET);
                 continue;
             }
 
             // receive the UA frame
             if (receiveFrame(ADDRESS_RX_SEND, CONTROL_UA, NULL) < 0) {
-                printf(FAINT "  Failed to receive the UA frame!\n" RESET);
+                printf(FAINT "Failed to receive the UA frame!\n" RESET);
                 continue;
             }
         }
@@ -305,10 +273,11 @@ int llclose(int showStatistics){
 
     // ensure the connection was terminated
     if (attempt == nRetransmissions) {
-        printf(RED "\n  Error! Failed to terminate the connection with the %s!\n" RESET, otherPC);
+        printf(RED "\nError! Failed to terminate the connection with the %s.\n" RESET,
+            isSender ? "receiver" : "sender");
         return -1;
     }
 
-    printf(GREEN "Connection terminated!\n" RESET);
+    printf(GREEN "Success!\n" RESET);
     return closeSerialPort();
 }
