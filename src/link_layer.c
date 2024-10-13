@@ -6,9 +6,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include "../include/console.h"
 #include "../include/link_layer.h"
 #include "../include/serial_port.h"
+#include "../include/utils.h"
 
 #define FLAG 0x7E
 
@@ -23,13 +23,15 @@
 #define CONTROL_REJ1 0x55
 #define CONTROL_DISC 0x0B
 
+#define ESCAPE   0x5E
+#define XOR_BYTE 0x20
+
 typedef enum {
     STATE_START,
     STATE_FLAG_RCV,
     STATE_ADDRESS_RCV,
     STATE_CONTROL_RCV,
-    STATE_BCC_OK,
-    STATE_STOP
+    STATE_BCC_OK
 } State;
 
 /* global variables */
@@ -51,6 +53,7 @@ static void setAlarm(int time) {
     alarmIsEnabled = TRUE;
 }
 
+/* SENDER */
 static int sendFrame(unsigned char address, unsigned char control) {
     // initialize and configure the frame
     unsigned char frame[5];
@@ -61,17 +64,60 @@ static int sendFrame(unsigned char address, unsigned char control) {
     frame[3] = address ^ control;
     
     // send the frame
-    return writeBytesSerialPort(frame, 5);
+    return (writeBytesSerialPort(frame, 5) == 5)
+        ? STATUS_SUCCESS
+        : STATUS_ERROR;
 }
 
-static int receiveFrame(unsigned char address, unsigned char control, unsigned char *frame) {
+static int sendDataFrame(unsigned char control, const unsigned char *data, int dataSize) {
+    // initialize and configure the frame
+    int frameSize = 7 + dataSize;
+    unsigned char *frame = malloc(frameSize * sizeof(unsigned char));
+
+    frame[0] = frame[frameSize - 1] = FLAG;
+    frame[1] = ADDRESS_TX_SEND; // NOTE: Only the sender can send data, so hardcoding
+                                // the address is justifiable.
+    frame[2] = control;
+    frame[3] = ADDRESS_TX_SEND ^ control;
+
+    // append the data to the frame
+    int index = 4;
+
+    for (int i = 0; i < dataSize; ++i) {
+        unsigned char byte = data[i];
+
+        switch (byte) {
+            case FLAG:
+            case ESCAPE:
+                // escape the byte
+                frame[index++] = ESCAPE;
+                frame[index++] = byte ^ XOR_BYTE;
+
+                break;
+
+            default:
+                frame[index++] = byte;
+        }
+    }
+
+    // send the frame
+    if (writeBytesSerialPort(frame, frameSize) < frameSize) {
+        return STATUS_ERROR;
+    }
+
+    free(frame);
+    return STATUS_SUCCESS;
+}
+
+/* RECEIVER */
+static int receiveFrame(unsigned char address, unsigned char control, unsigned char *data) {
     State state = STATE_START;
     const unsigned char BCC = address ^ control; // the expected BCC
 
     // activate the alarm
     setAlarm(timeout);
 
-    while (alarmIsEnabled && state != STATE_STOP)  {
+    while (alarmIsEnabled)  {
         unsigned char byte;
         
         // ensure there were no errors reading the byte
@@ -108,16 +154,23 @@ static int receiveFrame(unsigned char address, unsigned char control, unsigned c
                 break;
             
             case STATE_BCC_OK:
-                // verify if the byte received is the FLAG, that is,
-                // if we have reached the end of the frame
-                state = (byte == FLAG)
-                    ? STATE_STOP
-                    : STATE_START;
+                // verify if we have reached the end of the frame
+                if (byte == FLAG) {
+                    return STATUS_SUCCESS;
+                }
 
+                // if the current byte is NOT the flag, that means
+                // the frame contains data, so receive it
+                int bytesRead = receiveData(data);
+
+                if (bytesRead > 0) {
+                    return bytesRead;
+                }
+                
+                // NOTE: If this code is reached, that means a timeout occurred when
+                // receiving data or the data itself contained errors. 
+                state = STATE_FLAG_RCV;
                 continue;
-            
-            default:
-                break;
         }
 
         state = (byte == FLAG)
@@ -125,8 +178,49 @@ static int receiveFrame(unsigned char address, unsigned char control, unsigned c
             : STATE_START;
     }
 
-    // verify if a timeout occurred
-    return (state == STATE_STOP) ? 1 : -1;
+    return STATUS_ERROR; // a timeout occurred
+}
+
+static int receiveData(unsigned char *data) {
+    unsigned char BCC = 0;
+    _Bool escape = FALSE; // indicates if the next character should be escaped
+
+    int index = 0;
+
+    while (alarmIsEnabled) {
+        unsigned char byte;
+
+        // ensure there were no errors reading the byte
+        if (readByteSerialPort(&byte) <= 0) {
+            continue;
+        }
+
+        switch (byte) {
+            case FLAG:
+                // ensure the BCC is zero, as that means the data is correct
+                // NOTE: x ^ x = 0
+                return (BCC == 0)
+                    ? index
+                    : STATUS_ERROR;
+
+            case ESCAPE:
+                escape = TRUE;
+                break;
+
+            default:
+                // verify if the byte must be escaped
+                if (escape) {
+                    byte ^= XOR_BYTE;
+                    escape = FALSE;
+                }
+
+                // append the byte to the data
+                data[index++] = byte;
+                BCC ^= byte;
+        }
+    }
+
+    return STATUS_ERROR; // a timeout occurred
 }
 
 ////////////////////////////////////////////////
@@ -134,10 +228,8 @@ static int receiveFrame(unsigned char address, unsigned char control, unsigned c
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
-    if (openSerialPort(connectionParameters.serialPort,
-                       connectionParameters.baudRate) < 0)
-    {
-        return -1;
+    if (openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate) < 0) {
+        return STATUS_ERROR;
     }
 
     // set the global variables
@@ -189,11 +281,11 @@ int llopen(LinkLayer connectionParameters)
     // ensure communication was established
     if (attempt == nRetransmissions) {
         printf(RED "\nError! Failed to connect to the %s.\n" RESET, otherPC);
-        return -1;
+        return STATUS_ERROR;
     }
 
     printf(GREEN "Success!\n" RESET);
-    return 1;
+    return STATUS_SUCCESS;
 }
 
 ////////////////////////////////////////////////
@@ -275,7 +367,7 @@ int llclose(int showStatistics){
     if (attempt == nRetransmissions) {
         printf(RED "\nError! Failed to terminate the connection with the %s.\n" RESET,
             isSender ? "receiver" : "sender");
-        return -1;
+        return STATUS_ERROR;
     }
 
     printf(GREEN "Success!\n" RESET);

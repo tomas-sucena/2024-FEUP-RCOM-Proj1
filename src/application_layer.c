@@ -5,8 +5,8 @@
 #include <string.h>
 
 #include "../include/application_layer.h"
-#include "../include/console.h"
 #include "../include/link_layer.h"
+#include "../include/utils.h"
 
 #define DATA_SIZE 5
 
@@ -96,7 +96,7 @@ static int receiveControlPacket(char *filename, long *fileSize, int *dataSize) {
     int packetSize = llread(packet);
     
     if (packetSize <= 0) {
-        printf(RED "  Error! Failed to receive data from the serial port.\n" RESET);
+        printf(RED "Error! Failed to receive data from the serial port.\n" RESET);
         return -1;
     }
 
@@ -159,7 +159,7 @@ static int receiveFile(const char *filename) {
     FILE *file = fopen(filename, "wb");
 
     if (file == NULL) {
-        printf(RED "  Error! Failed to create '%s'.", filename);
+        printf(RED "Error! Failed to create '%s'.", filename);
         return -1;
     }
 
@@ -173,7 +173,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
     // configure the connection
     LinkLayer connectionParameters = {
-        .role = isSender ? LlTx : LlRx,
+        .role = LlRx ^ isSender,
         .baudRate = baudRate,
         .nRetransmissions = nTries,
         .timeout = timeout
