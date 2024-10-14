@@ -8,8 +8,6 @@
 #include "../include/link_layer.h"
 #include "../include/utils.h"
 
-#define DATA_SIZE 5
-
 #define CONTROL_START 1
 #define CONTROL_DATA  2
 #define CONTROL_END   3
@@ -76,7 +74,7 @@ static int sendFile(const char *filename) {
     
     if (file == NULL) {
         printf(RED "\nError! Failed to open '" BOLD "%s" RESET RED "'.\n" RESET, filename);
-        return -1;
+        return STATUS_ERROR;
     }
 
     // determine the size of the file
@@ -86,18 +84,18 @@ static int sendFile(const char *filename) {
     rewind(file); // return the file pointer to the beginning of the file
 
     // send the initial control packet  
-    return sendControlPacket(CONTROL_START, filename, fileSize, DATA_SIZE);
+    return sendControlPacket(CONTROL_START, filename, fileSize, MAX_PAYLOAD_SIZE);
 }
 
 /* RECEIVER */
-static int receiveControlPacket(char *filename, long *fileSize, int *dataSize) {
+static int receiveControlPacket(/*char *filename,*/ long *fileSize, int *dataSize) {
     // receive data from the serial port
     unsigned char packet[MAX_PAYLOAD_SIZE];
     int packetSize = llread(packet);
     
     if (packetSize <= 0) {
         printf(RED "Error! Failed to receive data from the serial port.\n" RESET);
-        return -1;
+        return STATUS_ERROR;
     }
 
     // parse the control packet
@@ -111,7 +109,7 @@ static int receiveControlPacket(char *filename, long *fileSize, int *dataSize) {
         // ensure there is no overflow
         if (index + L > packetSize) {
             printf(RED "Error! Received badly formatted packet.\n" RESET);
-            return -1;
+            return STATUS_ERROR;
         }
 
         void *ptr;
@@ -124,7 +122,7 @@ static int receiveControlPacket(char *filename, long *fileSize, int *dataSize) {
 
             // parse the filename
             case TYPE_FILENAME:
-                ptr = filename;
+                // ptr = filename;
                 break;
 
             // parse the size of a data packet
@@ -134,14 +132,14 @@ static int receiveControlPacket(char *filename, long *fileSize, int *dataSize) {
 
             default:
                 printf(RED "Error! Received badly formatted packet.\n" RESET);
-                return -1;
+                return STATUS_ERROR;
         }
 
         memcpy(ptr, packet + index, L * sizeof(unsigned char));
         index += L;
     }
 
-    return 1;
+    return STATUS_SUCCESS;
 }
 
 static int receiveFile(const char *filename) {
@@ -151,19 +149,20 @@ static int receiveFile(const char *filename) {
     // receive the initial control packet
     printf("\n> Receiving file...\n");
 
-    if (receiveControlPacket(filename, &fileSize, &packetSize) < 0) {
-        return -1;
+    if (receiveControlPacket(&fileSize, &packetSize) < 0) {
+        return STATUS_ERROR;
     }
 
     // create the file
     FILE *file = fopen(filename, "wb");
 
     if (file == NULL) {
-        printf(RED "Error! Failed to create '%s'.", filename);
-        return -1;
+        printf(RED "Error! Failed to create '%s'.\n", filename);
+        return STATUS_ERROR;
     }
 
-    return 1;
+    fclose(file); // close the file
+    return STATUS_SUCCESS;
 }
 
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
@@ -181,14 +180,37 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     memcpy(connectionParameters.serialPort, serialPort, 50);
 
     // establish communication with the other PC
-    llopen(connectionParameters);
+    const char *otherPC = isSender
+        ? "receiver"
+        : "sender";
 
-    if (isSender) {
+    printf("\n> Connecting to the %s...\n", otherPC);
+
+    if (llopen(connectionParameters) < 0) {
+        printf(RED "Error! Failed to connect to the %s.\n" RESET
+            "\n> Aborting...\n", otherPC);
+        return;
+    }
+
+    printf(GREEN "Success!\n" RESET);
+
+    // transfer the file between PCs
+    /*if (isSender) {
         sendFile(filename);
     }
     else {
         receiveFile(filename);
+    }*/
+
+    // terminate the connection
+    printf("\n> Disconnecting from the %s...\n", otherPC);
+
+    if (llclose(FALSE) < 0) {
+        printf(RED "\nError! Failed to terminate the connection with the %s.\n" RESET
+            "\n> Aborting...\n", otherPC);
+        return;
     }
 
-    llclose(FALSE);
+    printf(GREEN "Success!\n" RESET
+        "\n> Exiting...\n");
 }
