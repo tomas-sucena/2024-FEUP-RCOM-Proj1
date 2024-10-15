@@ -19,10 +19,8 @@
 #define CONTROL_UA   0x07
 #define CONTROL_I0   0x00
 #define CONTROL_I1   0x80
-#define CONTROL_RR0  0xAA
-#define CONTROL_RR1  0xAB
-#define CONTROL_REJ0 0x54
-#define CONTROL_REJ1 0x55
+#define CONTROL_RR   0xAA
+#define CONTROL_REJ  0x54
 #define CONTROL_DISC 0x0B
 
 #define ESCAPE   0x5E
@@ -155,9 +153,8 @@ static int receiveData(unsigned char *data) {
     return STATUS_ERROR; // a timeout occurred
 }
 
-static int receiveFrame(unsigned char address, unsigned char control, unsigned char *data) {
+static int receiveFrame(unsigned char *address, unsigned char *control, unsigned char *data) {
     State state = STATE_START;
-    const unsigned char BCC = address ^ control; // the expected BCC
 
     // activate the alarm
     setAlarm(timeout);
@@ -171,35 +168,44 @@ static int receiveFrame(unsigned char address, unsigned char control, unsigned c
         }
 
         switch (state) {
-            case STATE_FLAG_RCV:
-                // determine if the byte received is the expected address
-                if (byte == address) {
-                    state = STATE_ADDRESS_RCV;
-                    continue;
+            case STATE_START:
+                // verify if the byte is the flag
+                if (byte == FLAG) {
+                    state = STATE_FLAG_RCV;
                 }
+
+                break;
+
+            case STATE_FLAG_RCV:
+                *address = byte; // assign the address
+                state = STATE_ADDRESS_RCV;
 
                 break;
 
             case STATE_ADDRESS_RCV:
-                // determine if the byte received is the expected control byte
-                if (byte == control) {
-                    state = STATE_CONTROL_RCV;
-                    continue;
-                }
+                *control = byte; // assign the control byte
+                state = STATE_CONTROL_RCV;
 
                 break;
 
             case STATE_CONTROL_RCV:
-                // verify if the byte equals the BCC
-                if (byte == BCC) {
+                // verify if the current byte is the expected BCC,
+                // that is, if it is the XOR of the previous two bytes
+                if (byte == *address ^ *control) {
                     state = STATE_BCC_OK;
-                    continue;
+                }
+                else if (byte == FLAG) {
+                    state = STATE_FLAG_RCV;
+                }
+                else {
+                    state = STATE_START;
                 }
 
                 break;
             
             case STATE_BCC_OK:
-                // verify if we have reached the end of the frame
+                // verify if the current byte is the flag, that is,
+                // if we have reached the end of the frame
                 if (byte == FLAG) {
                     return STATUS_SUCCESS;
                 }
@@ -215,15 +221,8 @@ static int receiveFrame(unsigned char address, unsigned char control, unsigned c
                 // NOTE: If this code is reached, that means a timeout occurred when
                 // receiving data or the data itself contained errors. 
                 state = STATE_FLAG_RCV;
-                continue;
-
-            default:
                 break;
         }
-
-        state = (byte == FLAG)
-            ? STATE_FLAG_RCV
-            : STATE_START;
     }
 
     return STATUS_ERROR; // a timeout occurred
@@ -252,6 +251,8 @@ int llopen(LinkLayer connectionParameters)
             printf(" Trying again...\n");
         }
 
+        unsigned char address, control;
+
         if (isSender) {
             // send the SET frame
             if (sendFrame(ADDRESS_TX_SEND, CONTROL_SET) < 0) {
@@ -260,15 +261,27 @@ int llopen(LinkLayer connectionParameters)
             }
 
             // receive the UA frame
-            if (receiveFrame(ADDRESS_TX_SEND, CONTROL_UA, NULL) < 0) {
+            if (receiveFrame(&address, &control, NULL) < 0) {
                 printf(FAINT "Failed to receive the UA frame.");
+                continue;
+            }
+
+            // ensure the UA frame is correct
+            if (address != ADDRESS_TX_SEND || control != CONTROL_UA) {
+                printf(FAINT "Received a UA frame with errors.");
                 continue;
             }
         }
         else {
             // receive the SET frame
-            if (receiveFrame(ADDRESS_TX_SEND, CONTROL_SET, NULL) < 0) {
+            if (receiveFrame(&address, &control, NULL) < 0) {
                 printf(FAINT "Failed to receive the SET frame.");
+                continue;
+            }
+
+            // ensure the SET frame is correct
+            if (address != ADDRESS_TX_SEND || control != CONTROL_SET) {
+                printf(FAINT "Received a UA frame with errors.");
                 continue;
             }
 
@@ -300,15 +313,23 @@ int llwrite(const unsigned char *packet, int packetSize)
             printf(" Trying again...\n");
         }
 
+        unsigned char address, control;
+
         // send the packet        
-        if (sendDataFrame(CONTROL_REJ0 | sequenceNum, packet, packetSize) < 0) {
+        if (sendDataFrame(CONTROL_REJ | sequenceNum, packet, packetSize) < 0) {
             printf(FAINT "Failed to send the I-frame.");
             continue;
         }
 
         // receive the UA frame
-        if (receiveFrame(ADDRESS_TX_SEND, CONTROL_REJ1 ^ sequenceNum, NULL) < 0) {
+        if (receiveFrame(ADDRESS_TX_SEND, CONTROL_REJ ^ sequenceNum, NULL) < 0) {
             printf(FAINT "Failed to receive the UA frame.");
+            continue;
+        }
+
+        // ensure the UA frame is correct
+        if (address != ADDRESS_TX_SEND) {
+            printf(FAINT "Received a UA frame with errors.");
             continue;
         }
 
@@ -333,18 +354,60 @@ int llread(unsigned char *packet)
     int bytesRead, attempt;
 
     for (attempt = 0; attempt < nRetransmissions; ++attempt) {
+        unsigned char address, control;
+
         // receive the packet
-        bytesRead = receiveFrame(ADDRESS_TX_SEND, CONTROL_I0 | sequenceNum, packet);
+        bytesRead = receiveFrame(&address, &control, packet);
 
         if (bytesRead < 0) {
-            printf(FAINT "Failed to receive the SET frame.");
+            printf(FAINT "Failed to receive the I-frame.");
             continue;
         }
 
+        // ensure the address of the I-frame is correct
+        if (address != ADDRESS_TX_SEND) {
+            printf(FAINT "Received an I-frame with errors.");
+            continue;
+        }
+
+        // parse the control byte
+        _Bool newData = FALSE;
+
+        switch (control) {
+            // the sender wants to disconnect
+            case CONTROL_DISC:
+                return 0;
+
+            // received data
+            case CONTROL_I0:
+            case CONTROL_I1:
+                // verify if the data received is new
+                if (control >> 7 == sequenceNum) {
+                    newData = TRUE;
+                }
+                else {
+                    printf(FAINT "Received duplicate I-frame %d.\n", sequenceNum ^ 1);
+                }
+
+                control = CONTROL_RR | (sequenceNum ^ 1);
+                break;
+
+            default:
+                printf(FAINT "Received an I-frame with errors.");
+                control = CONTROL_REJ | sequenceNum;
+
+                break;
+        }
+
         // send the UA frame
-        if (sendFrame(ADDRESS_TX_SEND, CONTROL_REJ1 ^ sequenceNum) < 0) {
+        if (sendFrame(ADDRESS_TX_SEND, control) < 0) {
             printf(FAINT "Failed to send the UA frame.");
             continue;
+        }
+
+        // exit the loop only if the data received was new
+        if (newData) {
+            break;
         }
     }
 
@@ -369,32 +432,34 @@ int llclose(int showStatistics){
             printf(FAINT " Trying again...\n" RESET);
         }
 
+        unsigned char address, control;
+
         if (isSender) {
             // send the DISC frame
             if (sendFrame(ADDRESS_TX_SEND, CONTROL_DISC) < 0) {
-                printf(FAINT "Failed to send the DISC frame!" RESET);
+                printf(FAINT "Failed to send the DISC frame." RESET);
                 continue;
             }
 
             // receive the receiver's DISC frame
-            if (receiveFrame(ADDRESS_RX_SEND, CONTROL_DISC, NULL) < 0) {
-                printf(FAINT "Failed to receive the receiver's DISC frame!" RESET);
+            if (receiveFrame(&address, &control, NULL) < 0) {
+                printf(FAINT "Failed to receive the receiver's DISC frame." RESET);
+                continue;
+            }
+
+            // ensure the receiver's DISC frame is correct
+            if (address != ADDRESS_RX_SEND || control != CONTROL_DISC) {
+                printf(FAINT "Received a DISC frame with errors.");
                 continue;
             }
 
             // send the UA frame
             if (sendFrame(ADDRESS_RX_SEND, CONTROL_UA) < 0) {
-                printf(FAINT "Failed to send the UA frame!" RESET);
+                printf(FAINT "Failed to send the UA frame." RESET);
                 continue;
             }
         }
         else {
-            // receive the sender's DISC frame
-            if (receiveFrame(ADDRESS_TX_SEND, CONTROL_DISC, NULL) < 0) {
-                printf(FAINT "Failed to receive the sender's DISC frame!" RESET);
-                continue;
-            }
-
             // send the DISC frame
             if (sendFrame(ADDRESS_RX_SEND, CONTROL_DISC) < 0) {
                 printf(FAINT "Failed to send the DISC frame!" RESET);
@@ -402,8 +467,14 @@ int llclose(int showStatistics){
             }
 
             // receive the UA frame
-            if (receiveFrame(ADDRESS_RX_SEND, CONTROL_UA, NULL) < 0) {
+            if (receiveFrame(&address, &control, NULL) < 0) {
                 printf(FAINT "Failed to receive the UA frame!\n" RESET);
+                continue;
+            }
+
+            // ensure the UA frame is correct
+            if (address != ADDRESS_RX_SEND || control != CONTROL_UA) {
+                printf(FAINT "Received a UA frame with errors.");
                 continue;
             }
         }

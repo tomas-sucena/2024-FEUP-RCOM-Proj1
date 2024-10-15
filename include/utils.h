@@ -3,7 +3,7 @@
 
 // status codes
 #define STATUS_SUCCESS  1
-#define STATUS_ERROR   -1 
+#define STATUS_ERROR   -1
 
 /* CONSOLE */
 // colors
