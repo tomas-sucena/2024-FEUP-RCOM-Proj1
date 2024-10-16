@@ -15,13 +15,15 @@
 #define ADDRESS_TX_SEND 0x03
 #define ADDRESS_RX_SEND 0x01
 
-#define CONTROL_SET  0x03
-#define CONTROL_UA   0x07
-#define CONTROL_I0   0x00
-#define CONTROL_I1   0x80
-#define CONTROL_RR   0xAA
-#define CONTROL_REJ  0x54
-#define CONTROL_DISC 0x0B
+#define CONTROL_SET   0x03
+#define CONTROL_UA    0x07
+#define CONTROL_I0    0x00
+#define CONTROL_I1    0x80
+#define CONTROL_RR0   0xAA
+#define CONTROL_RR1   0xAB  
+#define CONTROL_REJ0  0x54
+#define CONTROL_REJ1  0x55  
+#define CONTROL_DISC  0x0B
 
 #define ESCAPE   0x5E
 #define XOR_BYTE 0x20
@@ -57,12 +59,7 @@ static void setAlarm(int time) {
 /* SENDER */
 static int sendFrame(unsigned char address, unsigned char control) {
     // initialize and configure the frame
-    unsigned char frame[5];
-    
-    frame[0] = frame[4] = FLAG;
-    frame[1] = address;
-    frame[2] = control;
-    frame[3] = address ^ control;
+    unsigned char frame[5] = {FLAG, address, control, address ^ control, FLAG};
     
     // send the frame
     return (writeBytesSerialPort(frame, 5) == 5)
@@ -155,6 +152,7 @@ static int receiveData(unsigned char *data) {
 
 static int receiveFrame(unsigned char *address, unsigned char *control, unsigned char *data) {
     State state = STATE_START;
+    unsigned char BCC;
 
     // activate the alarm
     setAlarm(timeout);
@@ -177,13 +175,13 @@ static int receiveFrame(unsigned char *address, unsigned char *control, unsigned
                 break;
 
             case STATE_FLAG_RCV:
-                *address = byte; // assign the address
+                BCC = (*address = byte); // assign the address and update the BCC
                 state = STATE_ADDRESS_RCV;
 
                 break;
 
             case STATE_ADDRESS_RCV:
-                *control = byte; // assign the control byte
+                BCC ^= (*control = byte); // assign the control byte and update the BCC
                 state = STATE_CONTROL_RCV;
 
                 break;
@@ -191,7 +189,7 @@ static int receiveFrame(unsigned char *address, unsigned char *control, unsigned
             case STATE_CONTROL_RCV:
                 // verify if the current byte is the expected BCC,
                 // that is, if it is the XOR of the previous two bytes
-                if (byte == *address ^ *control) {
+                if (byte == BCC) {
                     state = STATE_BCC_OK;
                 }
                 else if (byte == FLAG) {
@@ -231,8 +229,7 @@ static int receiveFrame(unsigned char *address, unsigned char *control, unsigned
 ////////////////////////////////////////////////
 // LLOPEN
 ////////////////////////////////////////////////
-int llopen(LinkLayer connectionParameters)
-{
+int llopen(LinkLayer connectionParameters) {
     if (openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate) < 0) {
         return STATUS_ERROR;
     }
@@ -244,9 +241,9 @@ int llopen(LinkLayer connectionParameters)
     nRetransmissions = connectionParameters.nRetransmissions;
 
     // establish communication with the other PC
-    int attempt;
+    _Bool done = FALSE;
 
-    for (attempt = 0; attempt < nRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < nRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(" Trying again...\n");
         }
@@ -292,11 +289,11 @@ int llopen(LinkLayer connectionParameters)
             }
         }
 
-        break;
+        done = TRUE;
     }
 
     // ensure communication was established
-    return (attempt < nRetransmissions)
+    return done
         ? STATUS_SUCCESS
         : STATUS_ERROR;
 }
@@ -304,40 +301,63 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 // LLWRITE
 ////////////////////////////////////////////////
-int llwrite(const unsigned char *packet, int packetSize)
-{
-    int attempt;
+int llwrite(const unsigned char *packet, int packetSize) {
+    _Bool done = FALSE;
 
-    for (attempt = 0; attempt < nRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < nRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(" Trying again...\n");
         }
 
         unsigned char address, control;
 
-        // send the packet        
-        if (sendDataFrame(CONTROL_REJ | sequenceNum, packet, packetSize) < 0) {
+        // send the packet
+        if (sendDataFrame(sequenceNum << 7, packet, packetSize) < 0) {
             printf(FAINT "Failed to send the I-frame.");
             continue;
         }
 
         // receive the UA frame
-        if (receiveFrame(ADDRESS_TX_SEND, CONTROL_REJ ^ sequenceNum, NULL) < 0) {
+        if (receiveFrame(&address, &control, NULL) < 0) {
             printf(FAINT "Failed to receive the UA frame.");
             continue;
         }
 
-        // ensure the UA frame is correct
+        // ensure the address of the UA frame is correct
         if (address != ADDRESS_TX_SEND) {
             printf(FAINT "Received a UA frame with errors.");
             continue;
         }
 
-        break;
+        // parse the control byte of the UA frame
+        switch (control) {
+            case CONTROL_RR0:
+            case CONTROL_RR1:
+                // ensure the receiver is requesting the correct frame
+                if ((sequenceNum ^ 1) == (CONTROL_REJ0 & 1)) {
+                    done = TRUE;
+                }
+                else {
+                    printf(FAINT "Received a UA frame with errors.");
+                }
+
+                break;
+
+            case CONTROL_REJ0:
+            case CONTROL_REJ1:
+                // ensure the receiver is rejecting the correct frame
+                if (sequenceNum == (CONTROL_REJ0 & 1)) {
+                    printf(FAINT "Sent duplicate I-frame #%d.", sequenceNum);
+                }
+
+            default:
+                printf(FAINT "Received a UA frame with errors.");
+                break;
+        }
     }
 
     // verify if a timeout occurred
-    if (attempt == nRetransmissions) {
+    if (!done) {
         putchar('\n');
         return STATUS_ERROR;
     }
@@ -349,11 +369,11 @@ int llwrite(const unsigned char *packet, int packetSize)
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
-int llread(unsigned char *packet)
-{
-    int bytesRead, attempt;
+int llread(unsigned char *packet) {
+    int bytesRead;
+    _Bool done = FALSE;
 
-    for (attempt = 0; attempt < nRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < nRetransmissions; ++attempt) {
         unsigned char address, control;
 
         // receive the packet
@@ -370,9 +390,7 @@ int llread(unsigned char *packet)
             continue;
         }
 
-        // parse the control byte
-        _Bool newData = FALSE;
-
+        // parse the control byte of the I-frame
         switch (control) {
             // the sender wants to disconnect
             case CONTROL_DISC:
@@ -383,18 +401,18 @@ int llread(unsigned char *packet)
             case CONTROL_I1:
                 // verify if the data received is new
                 if (control >> 7 == sequenceNum) {
-                    newData = TRUE;
+                    done = TRUE;
                 }
                 else {
-                    printf(FAINT "Received duplicate I-frame %d.\n", sequenceNum ^ 1);
+                    printf(FAINT "Received duplicate I-frame #%d.\n", sequenceNum ^ 1);
                 }
 
-                control = CONTROL_RR | (sequenceNum ^ 1);
+                control = CONTROL_RR0 | (sequenceNum ^ 1);
                 break;
 
             default:
                 printf(FAINT "Received an I-frame with errors.");
-                control = CONTROL_REJ | sequenceNum;
+                control = CONTROL_REJ0 | sequenceNum;
 
                 break;
         }
@@ -402,17 +420,13 @@ int llread(unsigned char *packet)
         // send the UA frame
         if (sendFrame(ADDRESS_TX_SEND, control) < 0) {
             printf(FAINT "Failed to send the UA frame.");
-            continue;
-        }
-
-        // exit the loop only if the data received was new
-        if (newData) {
-            break;
+            done = FALSE;
         }
     }
 
     // verify if a timeout occurred
-    if (attempt == nRetransmissions) {
+    if (!done) {
+        putchar('\n');
         return STATUS_ERROR;
     }
 
@@ -425,9 +439,9 @@ int llread(unsigned char *packet)
 ////////////////////////////////////////////////
 int llclose(int showStatistics){
     // end communication with the other PC
-    int attempt;
+    _Bool done = FALSE;
 
-    for (attempt = 0; attempt < nRetransmissions; ++attempt) {
+    for (int attempt = 0; attempt < nRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(FAINT " Trying again...\n" RESET);
         }
@@ -479,13 +493,14 @@ int llclose(int showStatistics){
             }
         }
 
-        break;
+        done = TRUE;
     }
+
+    // close the serial port
+    closeSerialPort();
 
     // verify if a timeout occurred
-    if (attempt == nRetransmissions) {
-        return STATUS_ERROR;
-    }
-
-    return closeSerialPort();
+    return done
+        ? STATUS_SUCCESS
+        : STATUS_ERROR;
 }

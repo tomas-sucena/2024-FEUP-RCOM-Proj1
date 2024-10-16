@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "../include/application_layer.h"
@@ -31,7 +32,28 @@ static unsigned char countBytes(long value) {
     return bits / 8; // NOTE: 1B = 8b
 }
 
-/* SENDER */
+/**
+ * @brief Determines the size of a file
+ * 
+ * @param file pointer to the file
+ * @return the size of the file
+ */
+static long getFileSize(FILE *file) {
+    // move the file pointer to the end of the file
+    fseek(file, 0L, SEEK_END);
+    
+    // compute the size of the file
+    long fileSize = ftell(file);
+
+    // return the file pointer to the beginning of the file
+    rewind(file);
+    
+    return fileSize;
+}
+
+////////////////////////////////////////////////
+// SENDER
+////////////////////////////////////////////////
 static int sendControlPacket(unsigned char control, const char *filename, long fileSize, int dataSize) {
     // compute the size of the packet
     unsigned char L_fileSize = countBytes(fileSize);
@@ -65,7 +87,9 @@ static int sendControlPacket(unsigned char control, const char *filename, long f
     memcpy(ptr, &dataSize, L_dataSize * sizeof(unsigned char));
 
     // send the packet
-    return llwrite(packet, packetSize);
+    return (llwrite(packet, packetSize) == packetSize)
+        ? STATUS_SUCCESS
+        : STATUS_ERROR;
 }
 
 static int sendFile(const char *filename) {
@@ -83,11 +107,17 @@ static int sendFile(const char *filename) {
 
     rewind(file); // return the file pointer to the beginning of the file
 
-    // send the initial control packet  
-    return sendControlPacket(CONTROL_START, filename, fileSize, MAX_PAYLOAD_SIZE);
+    // send the initial control packet
+    if (sendControlPacket(CONTROL_START, filename, fileSize, MAX_PAYLOAD_SIZE) < 0) {
+        return STATUS_ERROR;
+    }
+
+    return llclose(TRUE);
 }
 
-/* RECEIVER */
+////////////////////////////////////////////////
+// RECEIVER
+////////////////////////////////////////////////
 static int receiveControlPacket(/*char *filename,*/ long *fileSize, int *dataSize) {
     // receive data from the serial port
     unsigned char packet[MAX_PAYLOAD_SIZE];
@@ -98,7 +128,13 @@ static int receiveControlPacket(/*char *filename,*/ long *fileSize, int *dataSiz
         return STATUS_ERROR;
     }
 
-    // parse the control packet
+    // ensure the packet received is the initial control packet
+    if (packet[0] != CONTROL_START) {
+        printf(RED "Error! Received unexpected packet.\n" RESET);
+        return STATUS_ERROR;
+    }
+
+    // parse the control packet    
     int index = 1;
 
     while (index < packetSize) {
@@ -147,8 +183,6 @@ static int receiveFile(const char *filename) {
     int packetSize;
 
     // receive the initial control packet
-    printf("\n> Receiving file...\n");
-
     if (receiveControlPacket(&fileSize, &packetSize) < 0) {
         return STATUS_ERROR;
     }
@@ -161,11 +195,80 @@ static int receiveFile(const char *filename) {
         return STATUS_ERROR;
     }
 
-    fclose(file); // close the file
-    return STATUS_SUCCESS;
+    // initialize the buffer where the data packets will be stored
+    unsigned char *packet = malloc(packetSize * sizeof(unsigned char));
+
+    if (packet == NULL) {
+        printf(RED "Error! Failed to allocate memory for the data packet.\n" RESET);
+        return STATUS_ERROR;
+    }
+
+    // receive the data packets
+    int statusCode = STATUS_SUCCESS;
+
+    for (;;) {
+        int bytesReceived = llread(packet);
+
+        // ensure the packet was properly received
+        if (bytesReceived < 0) {
+            printf(RED "Error! Failed to receive packet.\n" RESET);
+            statusCode = STATUS_ERROR;
+
+            break;
+        }
+
+
+    }
+
+    // close the file
+    fclose(file);
+
+    // free the packet
+    free(packet);
+
+    return statusCode;
 }
 
-void applicationLayer(const char *serialPort, const char *role, int baudRate,
+////////////////////////////////////////////////
+// API
+////////////////////////////////////////////////
+ApplicationLayer *applicationLayer(_Bool isSender, const char *filepath, int dataSize) {
+    // ensure that, if the program is the sender,
+    // the file to be transferred exists
+    if (isSender && filepath == NULL) {
+        printf(RED "Error! The sender must provide a file to be transferred.\n" RESET);
+        return NULL;
+    }
+
+    // verify if the file can be opened
+    FILE *file = NULL;
+
+    if (filepath) {
+        file = fopen(filepath, isSender ? "rb" : "wb");
+
+        if (file == NULL) {
+            printf(RED "Error! Could not open '" BOLD "%s" RESET RED "'.\n" RESET, filepath);
+            return NULL;
+        }
+    }
+
+    // initialize the application
+    ApplicationLayer *app = malloc(sizeof(ApplicationLayer));
+
+    app->file = file;
+    app->filename = strrchr(filepath, '/');
+    app->filepath = filepath;
+    app->dataSize = dataSize;
+
+    // determine the size of the file
+    if (isSender) {
+        app->fileSize = getFileSize(file);
+    }
+
+    return app;
+}
+
+void fileTransferProtocol(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
 {
     _Bool isSender = (role[0] == 't');
@@ -195,17 +298,14 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     printf(GREEN "Success!\n" RESET);
 
     // transfer the file between PCs
-    /*if (isSender) {
-        sendFile(filename);
-    }
-    else {
-        receiveFile(filename);
-    }*/
+    isSender
+        ? sendFile(filename)
+        : receiveFile(filename);
 
     // terminate the connection
-    printf("\n> Disconnecting from the %s...\n", otherPC);
+    printf("\n> Disconnecting...\n");
 
-    if (llclose(FALSE) < 0) {
+    if (llclose(TRUE) < 0) {
         printf(RED "\nError! Failed to terminate the connection with the %s.\n" RESET
             "\n> Aborting...\n", otherPC);
         return;
