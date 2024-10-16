@@ -1,6 +1,10 @@
 #ifndef _UTILS_H_
 #define _UTILS_H_
 
+// boolean values
+#define FALSE 0
+#define TRUE  1
+
 // status codes
 #define STATUS_SUCCESS  1
 #define STATUS_ERROR   -1

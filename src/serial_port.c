@@ -1,141 +1,151 @@
 // Serial port interface implementation
-// DO NOT CHANGE THIS FILE
-
-#include "serial_port.h"
 
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <termios.h>
 #include <unistd.h>
 
-// MISC
+#include "../include/serial_port.h"
+#include "../include/utils.h"
+
 #define _POSIX_SOURCE 1 // POSIX compliant source
 
-int fd = -1;           // File descriptor for open serial port
-struct termios oldtio; // Serial port settings to restore on closing
-
-// Open and configure the serial port.
-// Returns -1 on error.
-int openSerialPort(const char *serialPort, int baudRate)
-{
-    // Open with O_NONBLOCK to avoid hanging when CLOCAL
+SerialPort *initSerialPort(const char *filename, int baudRate) {
+    // open with O_NONBLOCK to avoid hanging when CLOCAL
     // is not yet set on the serial port (changed later)
     int oflags = O_RDWR | O_NOCTTY | O_NONBLOCK;
-    fd = open(serialPort, oflags);
-    if (fd < 0)
-    {
-        perror(serialPort);
-        return -1;
+    int fd = open(filename, oflags);
+    
+    if (fd < 0) {
+        printf(RED "Error! Failed to open the serial port '" BOLD "%s" RESET RED "'.\n" RESET, filename);
+        return NULL;
     }
 
-    // Save current port settings
-    if (tcgetattr(fd, &oldtio) == -1)
-    {
-        perror("tcgetattr");
-        return -1;
+    // save the current port settings
+    struct termios oldSettings;
+
+    if (tcgetattr(fd, &oldSettings) < 0) {
+        printf(RED "Error! Failed to save the current serial port settings.\n" RESET);
+        return NULL;
     }
 
-    // Convert baud rate to appropriate flag
+    // convert the baud rate to an appropriate flag
     tcflag_t br;
-    switch (baudRate)
-    {
-    case 1200:
-        br = B1200;
-        break;
-    case 1800:
-        br = B1800;
-        break;
-    case 2400:
-        br = B2400;
-        break;
-    case 4800:
-        br = B4800;
-        break;
-    case 9600:
-        br = B9600;
-        break;
-    case 19200:
-        br = B19200;
-        break;
-    case 38400:
-        br = B38400;
-        break;
-    case 57600:
-        br = B57600;
-        break;
-    case 115200:
-        br = B115200;
-        break;
-    default:
-        fprintf(stderr, "Unsupported baud rate (must be one of 1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600, 115200)\n");
-        return -1;
+
+    switch (baudRate) {
+        case 1200:
+            br = B1200;
+            break;
+
+        case 1800:
+            br = B1800;
+            break;
+
+        case 2400:
+            br = B2400;
+            break;
+
+        case 4800:
+            br = B4800;
+            break;
+
+        case 9600:
+            br = B9600;
+            break;
+
+        case 19200:
+            br = B19200;
+            break;
+
+        case 38400:
+            br = B38400;
+            break;
+
+        case 57600:
+            br = B57600;
+            break;
+
+        case 115200:
+            br = B115200;
+            break;
+
+        default:
+            printf(RED "Error! Unsupported baud rate (must be one of 1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600, 115200).\n" RESET);
+            return NULL;
     }
 
-    // New port settings
-    struct termios newtio;
-    memset(&newtio, 0, sizeof(newtio));
+    // configure the serial port
+    struct termios newSettings;
+    memset(&newSettings, 0, sizeof(newSettings));
 
-    newtio.c_cflag = br | CS8 | CLOCAL | CREAD;
-    newtio.c_iflag = IGNPAR;
-    newtio.c_oflag = 0;
+    newSettings.c_cflag = br | CS8 | CLOCAL | CREAD;
+    newSettings.c_iflag = IGNPAR;
+    newSettings.c_oflag = 0;
 
-    // Set input mode (non-canonical, no echo,...)
-    newtio.c_lflag = 0;
-    newtio.c_cc[VTIME] = 0; // Block reading
-    newtio.c_cc[VMIN] = 1;  // Byte by byte
+    // set input mode (non-canonical, no echo,...)
+    newSettings.c_lflag = 0;
+    newSettings.c_cc[VTIME] = 0; // Block reading
+    newSettings.c_cc[VMIN] = 1;  // Byte by byte
 
     tcflush(fd, TCIOFLUSH);
 
-    // Set new port settings
-    if (tcsetattr(fd, TCSANOW, &newtio) == -1)
-    {
+    // set the new port settings as effective
+    if (tcsetattr(fd, TCSANOW, &newSettings) < 0) {
         perror("tcsetattr");
         close(fd);
-        return -1;
+
+        return NULL;
     }
 
     // Clear O_NONBLOCK flag to ensure blocking reads
     //oflags ^= O_NONBLOCK;
-    if (fcntl(fd, F_SETFL, oflags) == -1)
-    {
+    if (fcntl(fd, F_SETFL, oflags) == -1) {
         perror("fcntl");
         close(fd);
-        return -1;
+
+        return NULL;
     }
 
-    // Done
-    return fd;
+    // initialize the serial port
+    SerialPort *port = malloc(sizeof(SerialPort));
+
+    port->fd = fd;
+    port->oldSettings = oldSettings;
+
+    return port;
 }
 
-// Restore original port settings and close the serial port.
-// Returns -1 on error.
-int closeSerialPort()
-{
-    // Restore the old port settings
-    if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
-    {
+int freeSerialPort(SerialPort *port) {
+    int statusCode = STATUS_SUCCESS;
+
+    // restore the original port settings
+    if (tcsetattr(port->fd, TCSANOW, &port->oldSettings) == -1) {
         perror("tcsetattr");
-        return -1;
+        statusCode = STATUS_ERROR;
     }
 
-    return close(fd);
+    // close the serial port
+    if (close(port->fd) < 0) {
+        statusCode = STATUS_ERROR;
+    }
+
+    free(port);
+    return statusCode;
 }
 
-// Wait up to 0.1 second (VTIME) for a byte received from the serial port (must
-// check whether a byte was actually received from the return value).
-// Returns -1 on error, 0 if no byte was received, 1 if a byte was received.
-int readByteSerialPort(unsigned char *byte)
-{
-    return read(fd, byte, 1);
+int writeBytes(SerialPort *port, const unsigned char *data, int numBytes) {
+    // ensure all the bytes were written to the serial port
+    return (write(port->fd, data, numBytes * sizeof(unsigned char)) == numBytes)
+        ? STATUS_SUCCESS
+        : STATUS_ERROR;
 }
 
-// Write up to numBytes to the serial port (must check how many were actually
-// written in the return value).
-// Returns -1 on error, otherwise the number of bytes written.
-int writeBytesSerialPort(const unsigned char *bytes, int numBytes)
-{
-    return write(fd, bytes, numBytes);
+int readByte(SerialPort *port, unsigned char *byte) {
+    // ensure a single byte was read from the serial port
+    return (read(port->fd, byte, 1) == 1)
+        ? STATUS_SUCCESS
+        : STATUS_ERROR;
 }

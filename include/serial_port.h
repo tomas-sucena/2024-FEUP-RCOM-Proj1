@@ -1,25 +1,21 @@
-// Serial port header.
-// NOTE: This file must not be changed.
-
 #ifndef _SERIAL_PORT_H_
 #define _SERIAL_PORT_H_
 
-// Open and configure the serial port.
-// Returns -1 on error.
-int openSerialPort(const char *serialPort, int baudRate);
+#include <termios.h>
 
-// Restore original port settings and close the serial port.
-// Returns -1 on error.
-int closeSerialPort();
+/**
+ * @brief A struct that represents the serial port.
+ */
+typedef struct {
+    int fd;                     /** the file descriptor of the serial port */
+    struct termios oldSettings; /** the original serial port settings (to be restored on closing) */
+} SerialPort;
 
-// Wait up to 0.1 second (VTIME) for a byte received from the serial port (must
-// check whether a byte was actually received from the return value).
-// Returns -1 on error, 0 if no byte was received, 1 if a byte was received.
-int readByteSerialPort(unsigned char *byte);
+/* API */
+SerialPort *initSerialPort(const char *filename, int baudRate);
+int freeSerialPort(SerialPort *port);
 
-// Write up to numBytes to the serial port (must check how many were actually
-// written in the return value).
-// Returns -1 on error, otherwise the number of bytes written.
-int writeBytesSerialPort(const unsigned char *bytes, int numBytes);
+int writeBytes(SerialPort *port, const unsigned char *data, int numBytes);
+int readByte(SerialPort *port, unsigned char *byte);
 
 #endif // _SERIAL_PORT_H_
