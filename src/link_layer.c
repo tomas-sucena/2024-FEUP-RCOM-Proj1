@@ -61,11 +61,12 @@ static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control
 }
 
 static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned char *data, int dataSize) {
-    // initialize and configure the frame
-    int frameSize = 7 + dataSize;
+    // initialize the frame
+    int frameSize = 7 + dataSize * 2;
     unsigned char *frame = malloc(frameSize * sizeof(unsigned char));
 
-    frame[0] = frame[frameSize - 1] = FLAG;
+    // configure the header of the frame
+    frame[0] = FLAG;
     frame[1] = ADDRESS_TX_SEND; // NOTE: Only the sender can send data, so hardcoding
                                 // the address is justifiable.
     frame[2] = control;
@@ -73,26 +74,42 @@ static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned ch
 
     // append the data to the frame
     int index = 4;
+    unsigned char BCC = 0;
 
     for (int i = 0; i < dataSize; ++i) {
         unsigned char byte = data[i];
+        BCC ^= byte;
 
         switch (byte) {
             case FLAG:
             case ESCAPE:
                 // escape the byte
                 frame[index++] = ESCAPE;
-                frame[index++] = byte ^ XOR_BYTE;
-
-                break;
+                byte ^= XOR_BYTE;
 
             default:
                 frame[index++] = byte;
+                break;
         }
     }
 
+    // configure the trailer of the frame
+    switch (BCC) {
+        case FLAG:
+        case ESCAPE:
+            // escape the byte
+            frame[index++] = ESCAPE;
+            BCC ^= XOR_BYTE;
+
+        default:
+            frame[index++] = BCC;
+            break;
+    }
+
+    frame[index++] = FLAG;
+
     // send the frame
-    if (spWrite(ll->port, frame, frameSize) < 0) {
+    if (spWrite(ll->port, frame, index) < 0) {
         return STATUS_ERROR;
     }
 
@@ -182,8 +199,8 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
             case STATE_CONTROL_RCV:
                 // verify if the current byte is the expected BCC,
                 // that is, if it is the XOR of the previous two bytes
-                if (byte == BCC) {
-                    state = STATE_BCC_OK;
+                if (byte == BCC && receiveData(ll, data) >= 0) {
+                    return STATUS_SUCCESS;
                 }
                 else if (byte == FLAG) {
                     state = STATE_FLAG_RCV;
@@ -205,7 +222,7 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
                 // the frame contains data, so receive it
                 int bytesRead = receiveData(ll, data);
 
-                if (bytesRead > 0) {
+                if (bytesRead >= 0) {
                     return bytesRead;
                 }
                 
@@ -303,10 +320,13 @@ int llOpen(LinkLayer *ll) {
         done = TRUE;
     }
 
-    // ensure communication was established
-    return done
-        ? STATUS_SUCCESS
-        : STATUS_ERROR;
+    // verify if a timeout occurred
+    if (!done) {
+        putchar('\n');
+        return STATUS_ERROR;
+    }
+
+    return STATUS_SUCCESS;
 }
 
 int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
@@ -342,7 +362,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
             case CONTROL_RR0:
             case CONTROL_RR1:
                 // ensure the receiver is requesting the correct frame
-                if ((ll->sequenceNum ^ 1) == (CONTROL_REJ0 & 1)) {
+                if (control == (CONTROL_RR0 | (ll->sequenceNum ^ 1))) {
                     done = TRUE;
                 }
                 else {
@@ -354,7 +374,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
             case CONTROL_REJ0:
             case CONTROL_REJ1:
                 // ensure the receiver is rejecting the correct frame
-                if (ll->sequenceNum == (CONTROL_REJ0 & 1)) {
+                if (control == (CONTROL_REJ0 | ll->sequenceNum)) {
                     printf(FAINT "Sent duplicate I-frame #%d.", ll->sequenceNum);
                 }
 
@@ -379,13 +399,17 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
     _Bool done = FALSE;
 
     for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
+        if (attempt > 0) {
+            printf(" Trying again...\n");
+        }
+
         unsigned char address, control;
 
         // receive the packet
         bytesRead = receiveFrame(ll, &address, &control, packet);
 
         if (bytesRead < 0) {
-            printf(FAINT "Failed to receive the I-frame.");
+            printf(FAINT "Failed to receive an I-frame.");
             continue;
         }
 
@@ -409,7 +433,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
                     done = TRUE;
                 }
                 else {
-                    printf(FAINT "Received duplicate I-frame #%d.\n", ll->sequenceNum ^ 1);
+                    printf(FAINT "Received duplicate I-frame #%d.", ll->sequenceNum ^ 1);
                 }
 
                 control = CONTROL_RR0 | (ll->sequenceNum ^ 1);
@@ -422,7 +446,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
                 break;
         }
 
-        // send the UA frame
+        // send the acknowledgement frame
         if (sendFrame(ll, ADDRESS_TX_SEND, control) < 0) {
             printf(FAINT "Failed to send the UA frame.");
             done = FALSE;
@@ -443,7 +467,7 @@ int llClose(LinkLayer *ll, int showStatistics){
     // end communication with the other PC
     _Bool done = FALSE;
 
-    for (int attempt = 0; attempt < ll->nRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(FAINT " Trying again...\n" RESET);
         }
@@ -484,7 +508,7 @@ int llClose(LinkLayer *ll, int showStatistics){
 
             // receive the UA frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
-                printf(FAINT "Failed to receive the UA frame!\n" RESET);
+                printf(FAINT "Failed to receive the UA frame!" RESET);
                 continue;
             }
 
@@ -498,11 +522,11 @@ int llClose(LinkLayer *ll, int showStatistics){
         done = TRUE;
     }
 
-    // close the serial port
-    //closeSerialPort();
-
     // verify if a timeout occurred
-    return done
-        ? STATUS_SUCCESS
-        : STATUS_ERROR;
+    if (!done) {
+        putchar('\n');
+        return STATUS_ERROR;
+    }
+
+    return STATUS_SUCCESS;
 }

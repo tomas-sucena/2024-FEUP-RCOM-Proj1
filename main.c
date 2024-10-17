@@ -27,7 +27,7 @@ int main(int argc, char *argv[])
     const char *serialPort = argv[1];
     const int baudrate = atoi(argv[2]);
     const char *role = argv[3];
-    const char *filepath = (argc < 5) ? argv[4] : NULL;
+    const char *filepath = (argc < 5) ? NULL : argv[4];
 
     // validate the role
     if (strcmp("tx", role) != 0 && strcmp("rx", role) != 0) {
@@ -45,19 +45,26 @@ int main(int argc, char *argv[])
     }
     
     // run the application
-    printf("> Starting link-layer protocol application\n"
+    printf("\n> Starting link-layer protocol application\n"
            BOLD "  - Serial port:" RESET " %s\n"
            BOLD "  - Role:" RESET " %s\n"
-           BOLD "  - Baudrate:" RESET " %d\n"
+           BOLD "  - Baudrate:" RESET " %d Hz\n"
            BOLD "  - Number of tries:" RESET " %d\n"
-           BOLD "  - Timeout:" RESET " %d\n"
-           BOLD "  - Filename:" RESET " %s\n",
+           BOLD "  - Timeout:" RESET " %d s\n"
+           BOLD "  - File:" RESET " %s\n",
            serialPort,
            role,
            baudrate,
            DEFAULT_N_TRIES,
            DEFAULT_TIMEOUT,
            filepath);
+
+    if (appRun(app) < 0) {
+        printf("\n> Aborting...\n");
+        appFree(app);
+
+        return EXIT_FAILURE;
+    }
 
     // free the application
     if (appFree(app) < 0) {

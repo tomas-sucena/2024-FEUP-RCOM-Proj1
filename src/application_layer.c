@@ -18,18 +18,39 @@
 #define TYPE_DATA_SIZE 2
 
 /**
- * @brief Returns the minimum number of bytes needed to represent a value.
- * @param value an integer value
- * @return the minimum number of bytes needed to represent the value
+ * @brief Returns the minimum number of bytes needed to represent a number.
+ * @param number an integer
+ * @return the minimum number of bytes needed to represent the number
  */
-static unsigned char countBytes(long value) {
+static unsigned char countBytes(long number) {
     unsigned char bits = 0;
 
-    for (; value; value >>= 1) {
+    for (; number; number >>= 1) {
         ++bits;
     }
 
     return bits / 8; // NOTE: 1B = 8b
+}
+
+/**
+ * @brief Extracts the filename from a path to a file.
+ * 
+ * @param filepath the path to a file
+ * @return the filename
+ */
+static char *getFilename(const char *filepath) {
+    // find the last occurrence of the '/' character
+    const char *slash = strrchr(filepath, '/');
+
+    if (slash == NULL) {
+        slash = filepath;
+    }
+
+    // initialize the filename
+    char *filename = (char *) malloc(strlen(slash) * sizeof(char));
+    strcpy(filename, slash + 1);
+
+    return filename;
 }
 
 /**
@@ -51,6 +72,31 @@ static long getFileSize(FILE *file) {
     return fileSize;
 }
 
+static void writeNumber(unsigned char *data, long number, unsigned char numBytes) {
+    for (unsigned char index = numBytes; index > 0; ) {
+        // append the least significant byte of the number
+        data[--index] = (unsigned char) (number & 0xFF);
+
+        // shift the number one byte to the right
+        number >>= 8;
+    }
+}
+
+static long readNumber(unsigned char *data, unsigned char numBytes) {
+    long number = 0;
+
+    for (unsigned char index = 0; index < numBytes; ++index) {
+        // shift the number one byte to the left
+        // to make space for the next byte
+        number <<= 8;
+
+        // copy the byte to the least significant byte of the number
+        number |= data[index];
+    }
+
+    return number;
+}
+
 ////////////////////////////////////////////////
 // SENDER
 ////////////////////////////////////////////////
@@ -70,7 +116,7 @@ static int sendControlPacket(ApplicationLayer *app, unsigned char control) {
     *ptr++ = TYPE_FILE_SIZE;
     *ptr++ = L_fileSize;
 
-    memcpy(ptr, &app->fileSize, L_fileSize * sizeof(unsigned char));
+    writeNumber(ptr, app->fileSize, L_fileSize);
     ptr += L_fileSize;
 
     // write the TLV corresponding to the file name
@@ -84,12 +130,39 @@ static int sendControlPacket(ApplicationLayer *app, unsigned char control) {
     *ptr++ = TYPE_DATA_SIZE;
     *ptr++ = L_dataSize;
 
-    memcpy(ptr, &app->dataSize, L_dataSize * sizeof(unsigned char));
+    writeNumber(ptr, app->dataSize, L_dataSize);
 
-    // send the packet
-    return (llWrite(app->ll, packet, packetSize) == packetSize)
-        ? STATUS_SUCCESS
-        : STATUS_ERROR;
+    // send the packet via the serial port
+    if (llWrite(app->ll, packet, packetSize) == packetSize) {
+        return STATUS_SUCCESS;
+    }
+
+    // an error occurred in the link layer
+    printf(RED "Error! Failed to send data via the serial port.\n" RESET);
+    return STATUS_ERROR;
+}
+
+static int sendDataPacket(ApplicationLayer *app, const unsigned char *data, int dataSize) {
+    // initialize the data packet
+    int packetSize = 3 + dataSize;
+    unsigned char packet[packetSize];
+    
+    // configure the packet header
+    packet[0] = CONTROL_DATA;
+    packet[1] = dataSize >> 8; // the most significant byte of the data size
+    packet[2] = dataSize;      // the least significant byte of the data size
+
+    // append the data to the packet
+    memcpy(packet + 3, data, dataSize * sizeof(unsigned char));
+
+    // send the packet via the serial port
+    if (llWrite(app->ll, packet, packetSize) == packetSize) {
+        return STATUS_SUCCESS;
+    }
+
+    // an error occurred in the link layer
+    printf(RED "Error! Failed to send data via the serial port.\n" RESET);
+    return STATUS_ERROR;
 }
 
 static int sendFile(ApplicationLayer *app) {
@@ -98,6 +171,34 @@ static int sendFile(ApplicationLayer *app) {
         return STATUS_ERROR;
     }
 
+    // allocate a buffer to store the data from the file
+    unsigned char *data = (unsigned char *) malloc(app->dataSize * sizeof(unsigned char));
+
+    // send the data packets
+    for (;;) {
+        int bytesRead = (int) fread(data, sizeof(unsigned char), app->dataSize, app->file);
+
+        // ensure if we have read the entire file
+        if (bytesRead == 0) {
+            break;
+        }
+
+        // send the data to the receiver
+        if (sendDataPacket(app, data, bytesRead) < 0) {
+            return STATUS_ERROR;
+        }
+    }
+
+    // send the final control packet
+    if (sendControlPacket(app, CONTROL_END) < 0) {
+        free(data);
+        return STATUS_ERROR;
+    }
+
+    // free the buffer
+    free(data);
+
+    printf(GREEN "Success!\n" RESET);
     return STATUS_SUCCESS;
 }
 
@@ -108,7 +209,7 @@ static int receiveControlPacket(ApplicationLayer *app) {
     // receive data from the serial port
     unsigned char packet[MAX_PAYLOAD_SIZE];
     int packetSize = llRead(app->ll, packet);
-    
+
     if (packetSize <= 0) {
         printf(RED "Error! Failed to receive data from the serial port.\n" RESET);
         return STATUS_ERROR;
@@ -120,36 +221,47 @@ static int receiveControlPacket(ApplicationLayer *app) {
         return STATUS_ERROR;
     }
 
-    // parse the control packet    
+    // parse the control packet
     int index = 1;
 
     while (index < packetSize) {
         // parse the Type and Length fields
-        unsigned T = packet[index++];
-        unsigned L = packet[index++];
-
+        unsigned char T = packet[index++];
+        unsigned char L = packet[index++];
+        
         // ensure there is no overflow
         if (index + L > packetSize) {
             printf(RED "Error! Received badly formatted packet.\n" RESET);
             return STATUS_ERROR;
         }
 
-        void *ptr = NULL;
-
         switch (T) {
             // parse the file size
             case TYPE_FILE_SIZE:
-                ptr = &app->fileSize;
+                app->fileSize = readNumber(packet + index, L);
+                printf("\n  " BOLD "- Size: " RESET "%ld\n", app->fileSize);
+
                 break;
 
             // parse the filename
-            case TYPE_FILENAME:
-                // ptr = filename;
+            case TYPE_FILENAME: {
+                char filename[L + 1];
+                
+                memcpy(app->filename, packet + index, L * sizeof(unsigned char));
+                filename[L] = '\0';
+
+                // assign the filename if it hasn't been assigned already
+                if (app->filename == NULL) {
+                    app->filename = filename;
+                }
+
+                printf("\n  " BOLD "- Name: " RESET "%s\n", filename);
                 break;
+            }
 
             // parse the size of a data packet
             case TYPE_DATA_SIZE:
-                ptr = &app->dataSize;
+                app->dataSize = (int) readNumber(packet + index, L);
                 break;
 
             default:
@@ -157,27 +269,13 @@ static int receiveControlPacket(ApplicationLayer *app) {
                 return STATUS_ERROR;
         }
 
-        memcpy(ptr, packet + index, L * sizeof(unsigned char));
         index += L;
     }
 
     return STATUS_SUCCESS;
 }
 
-static int receiveFile(ApplicationLayer *app) {
-    // receive the initial control packet
-    if (receiveControlPacket(app) < 0) {
-        return STATUS_ERROR;
-    }
-
-    // create the file
-    FILE *file = fopen(app->filename, "wb");
-
-    if (file == NULL) {
-        printf(RED "Error! Failed to open '%s'.\n", app->filename);
-        return STATUS_ERROR;
-    }
-
+static int receiveDataPackets(ApplicationLayer *app) {
     // initialize the buffer where the data packets will be stored
     unsigned char *packet = malloc(app->dataSize * sizeof(unsigned char));
 
@@ -187,28 +285,78 @@ static int receiveFile(ApplicationLayer *app) {
     }
 
     // receive the data packets
+    _Bool done = FALSE;
     int statusCode = STATUS_SUCCESS;
 
-    for (;;) {
-        int bytesReceived = llRead(app->ll, packet);
+    while (!done) {
+        // receive data from the serial port
+        int bytesRead = llRead(app->ll, packet);
 
-        // ensure the packet was properly received
-        if (bytesReceived < 0) {
-            printf(RED "Error! Failed to receive packet.\n" RESET);
+        if (bytesRead < 0) {
+            printf(RED "Error! Failed to receive data from the serial port.\n" RESET);
             statusCode = STATUS_ERROR;
 
             break;
         }
 
+        // ensure the control byte is valid
+        switch (packet[0]) {
+            case CONTROL_DATA:
+                break;
 
+            default:
+                printf(RED "Error! Received unexpected data packet.\n" RESET);
+            
+            case CONTROL_END:
+                done = TRUE;
+                continue;
+        }
+
+        // compute the number of data bytes received
+        int dataSize = (packet[1] << 8) | packet[2];
+
+        // append the data to the file
+        if (fwrite(packet + 3, sizeof(unsigned char), dataSize, app->file) < dataSize) {
+            printf(RED "Error! Failed to write to '" BOLD "%s" RESET RED "'.\n" RESET, app->filename);
+            statusCode = STATUS_ERROR;
+
+            break;
+        }
     }
 
-    // close the file
-    fclose(file);
-
-    // free the packet
+    // free the buffer
     free(packet);
 
+    return statusCode;
+}
+
+static int receiveFile(ApplicationLayer *app) {
+    // receive the initial control packet
+    if (receiveControlPacket(app) < 0) {
+        return STATUS_ERROR;
+    }
+
+    // open the file, if that hasn't yet been done
+    if (app->file == NULL) {
+        app->file = fopen(app->filename, "wb");
+
+        // ensure the file was properly opened
+        if (app->file == NULL) {
+            printf(RED "Error! Failed to open '%s'.\n", app->filename);
+            return STATUS_ERROR;
+        }
+    }
+
+    // receive the data packets
+    int statusCode = receiveDataPackets(app);
+
+    // close the file
+    if (fclose(app->file) < 0) {
+        printf(RED "Error! Failed to close '" BOLD "%s" RESET "'.\n" RESET, app->filename);
+        statusCode = STATUS_ERROR;
+    }
+
+    app->file = NULL;
     return statusCode;
 }
 
@@ -231,12 +379,13 @@ ApplicationLayer *appInit(const char *serialPort, _Bool isSender, int baudRate, 
         return NULL;
     }
 
-    // verify if the file can be opened
+    // open the file
     FILE *file = NULL;
 
     if (filepath) {
         file = fopen(filepath, isSender ? "rb" : "wb");
 
+        // ensure the file was properly opened
         if (file == NULL) {
             printf(RED "Error! Could not open '" BOLD "%s" RESET RED "'.\n" RESET, filepath);
             return NULL;
@@ -248,8 +397,7 @@ ApplicationLayer *appInit(const char *serialPort, _Bool isSender, int baudRate, 
 
     app->ll = ll;
     app->file = file;
-    app->filename = strrchr(filepath, '/');
-    app->filepath = filepath;
+    app->filename = getFilename(filepath);
     app->dataSize = dataSize;
 
     // determine the size of the file
@@ -269,6 +417,12 @@ int appFree(ApplicationLayer *app) {
         statusCode = STATUS_ERROR;
     }
 
+    // free the filename
+    free(app->filename);
+
+    // free the application layer
+    free(app);
+
     return statusCode;
 }
 
@@ -283,14 +437,15 @@ int appRun(ApplicationLayer *app) {
     printf("\n> Connecting to the %s...\n", otherPC);
 
     if (llOpen(app->ll) < 0) {
-        printf(RED "Error! Failed to connect to the %s.\n" RESET
-            "\n> Aborting...\n", otherPC);
+        printf(RED "Error! Failed to connect to the %s.\n" RESET, otherPC);
         return STATUS_ERROR;
     }
 
     printf(GREEN "Success!\n" RESET);
 
     // transfer the file between PCs
+    printf("\n> Transferring the file...\n");
+
     isSender
         ? sendFile(app)
         : receiveFile(app);
@@ -299,8 +454,7 @@ int appRun(ApplicationLayer *app) {
     printf("\n> Disconnecting...\n");
 
     if (llClose(app->ll, TRUE) < 0) {
-        printf(RED "\nError! Failed to terminate the connection with the %s.\n" RESET
-            "\n> Aborting...\n", otherPC);
+        printf(RED "\nError! Failed to terminate the connection with the %s.\n" RESET, otherPC);
         return STATUS_ERROR;
     }
 

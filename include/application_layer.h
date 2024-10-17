@@ -9,8 +9,7 @@
 typedef struct {
     LinkLayer *ll;
     FILE *file;
-    const char *filename;
-    const char *filepath;
+    char *filename;
     long fileSize;
     int dataSize;
 } ApplicationLayer;
