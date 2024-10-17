@@ -3,11 +3,11 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include "../include/link_layer.h"
-#include "../include/serial_port.h"
 #include "../include/utils.h"
 
 #define FLAG 0x7E
@@ -36,15 +36,10 @@ typedef enum {
     STATE_BCC_OK
 } State;
 
-/* global variables */
-// link layer
-static _Bool isSender;
-static int timeout;
-static _Bool sequenceNum;
-
-// alarm
-static _Bool alarmIsEnabled;
-static int nRetransmissions;
+////////////////////////////////////////////////
+// ALARM
+////////////////////////////////////////////////
+static _Bool alarmIsEnabled; /** indicates if the alarm is activated */
 
 static void handleAlarm() {
     alarmIsEnabled = FALSE;
@@ -57,17 +52,15 @@ static void setAlarm(int time) {
 }
 
 /* SENDER */
-static int sendFrame(unsigned char address, unsigned char control) {
+static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control) {
     // initialize and configure the frame
     unsigned char frame[5] = {FLAG, address, control, address ^ control, FLAG};
     
     // send the frame
-    return (writeBytesSerialPort(frame, 5) == 5)
-        ? STATUS_SUCCESS
-        : STATUS_ERROR;
+    return spWrite(ll->port, frame, 5);
 }
 
-static int sendDataFrame(unsigned char control, const unsigned char *data, int dataSize) {
+static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned char *data, int dataSize) {
     // initialize and configure the frame
     int frameSize = 7 + dataSize;
     unsigned char *frame = malloc(frameSize * sizeof(unsigned char));
@@ -99,7 +92,7 @@ static int sendDataFrame(unsigned char control, const unsigned char *data, int d
     }
 
     // send the frame
-    if (writeBytesSerialPort(frame, frameSize) < frameSize) {
+    if (spWrite(ll->port, frame, frameSize) < 0) {
         return STATUS_ERROR;
     }
 
@@ -108,7 +101,7 @@ static int sendDataFrame(unsigned char control, const unsigned char *data, int d
 }
 
 /* RECEIVER */
-static int receiveData(unsigned char *data) {
+static int receiveData(LinkLayer *ll, unsigned char *data) {
     unsigned char BCC = 0;
     _Bool escape = FALSE; // indicates if the next character should be escaped
 
@@ -118,7 +111,7 @@ static int receiveData(unsigned char *data) {
         unsigned char byte;
 
         // ensure there were no errors reading the byte
-        if (readByteSerialPort(&byte) <= 0) {
+        if (spRead(ll->port, &byte) < 0) {
             continue;
         }
 
@@ -150,18 +143,18 @@ static int receiveData(unsigned char *data) {
     return STATUS_ERROR; // a timeout occurred
 }
 
-static int receiveFrame(unsigned char *address, unsigned char *control, unsigned char *data) {
+static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *control, unsigned char *data) {
     State state = STATE_START;
     unsigned char BCC;
 
     // activate the alarm
-    setAlarm(timeout);
+    setAlarm(ll->timeout);
 
     while (alarmIsEnabled)  {
         unsigned char byte;
         
         // ensure there were no errors reading the byte
-        if (readByteSerialPort(&byte) <= 0) {
+        if (spRead(ll->port, &byte) <= 0) {
             continue;
         }
 
@@ -210,7 +203,7 @@ static int receiveFrame(unsigned char *address, unsigned char *control, unsigned
 
                 // if the current byte is NOT the flag, that means
                 // the frame contains data, so receive it
-                int bytesRead = receiveData(data);
+                int bytesRead = receiveData(ll, data);
 
                 if (bytesRead > 0) {
                     return bytesRead;
@@ -227,38 +220,56 @@ static int receiveFrame(unsigned char *address, unsigned char *control, unsigned
 }
 
 ////////////////////////////////////////////////
-// LLOPEN
+// API
 ////////////////////////////////////////////////
-int llopen(LinkLayer connectionParameters) {
-    if (openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate) < 0) {
-        return STATUS_ERROR;
+LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int nRetransmissions, int timeout) {
+    // open the serial port
+    SerialPort *port = spInit(serialPort, baudRate);
+
+    if (port == NULL) {
+        return NULL;
     }
 
-    // set the global variables
-    isSender = (connectionParameters.role == LlTx);
-    timeout = connectionParameters.timeout;
-    sequenceNum = 0;
-    nRetransmissions = connectionParameters.nRetransmissions;
+    // initialize the link layer
+    LinkLayer *ll = malloc(sizeof(LinkLayer));
 
+    ll->port = port;
+    ll->isSender = isSender;
+    ll->nRetransmissions = nRetransmissions;
+    ll->timeout = timeout;
+    ll->sequenceNum = 0;
+
+    return ll;
+}
+
+int llFree(LinkLayer *ll) {
+    // free the serial port
+    int statusCode = spFree(ll->port);
+    
+    free(ll);
+    return statusCode;
+}
+
+int llOpen(LinkLayer *ll) {
     // establish communication with the other PC
     _Bool done = FALSE;
 
-    for (int attempt = 0; !done && attempt < nRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(" Trying again...\n");
         }
 
         unsigned char address, control;
 
-        if (isSender) {
+        if (ll->isSender) {
             // send the SET frame
-            if (sendFrame(ADDRESS_TX_SEND, CONTROL_SET) < 0) {
+            if (sendFrame(ll, ADDRESS_TX_SEND, CONTROL_SET) < 0) {
                 printf(FAINT "Failed to send the SET frame.");
                 continue;
             }
 
             // receive the UA frame
-            if (receiveFrame(&address, &control, NULL) < 0) {
+            if (receiveFrame(ll, &address, &control, NULL) < 0) {
                 printf(FAINT "Failed to receive the UA frame.");
                 continue;
             }
@@ -271,7 +282,7 @@ int llopen(LinkLayer connectionParameters) {
         }
         else {
             // receive the SET frame
-            if (receiveFrame(&address, &control, NULL) < 0) {
+            if (receiveFrame(ll, &address, &control, NULL) < 0) {
                 printf(FAINT "Failed to receive the SET frame.");
                 continue;
             }
@@ -283,7 +294,7 @@ int llopen(LinkLayer connectionParameters) {
             }
 
             // send the UA frame
-            if (sendFrame(ADDRESS_TX_SEND, CONTROL_UA) < 0) {
+            if (sendFrame(ll, ADDRESS_TX_SEND, CONTROL_UA) < 0) {
                 printf(FAINT "Failed to send the UA frame.");
                 continue;
             }
@@ -298,13 +309,10 @@ int llopen(LinkLayer connectionParameters) {
         : STATUS_ERROR;
 }
 
-////////////////////////////////////////////////
-// LLWRITE
-////////////////////////////////////////////////
-int llwrite(const unsigned char *packet, int packetSize) {
+int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
     _Bool done = FALSE;
 
-    for (int attempt = 0; !done && attempt < nRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(" Trying again...\n");
         }
@@ -312,13 +320,13 @@ int llwrite(const unsigned char *packet, int packetSize) {
         unsigned char address, control;
 
         // send the packet
-        if (sendDataFrame(sequenceNum << 7, packet, packetSize) < 0) {
+        if (sendDataFrame(ll, ll->sequenceNum << 7, packet, packetSize) < 0) {
             printf(FAINT "Failed to send the I-frame.");
             continue;
         }
 
         // receive the UA frame
-        if (receiveFrame(&address, &control, NULL) < 0) {
+        if (receiveFrame(ll, &address, &control, NULL) < 0) {
             printf(FAINT "Failed to receive the UA frame.");
             continue;
         }
@@ -334,7 +342,7 @@ int llwrite(const unsigned char *packet, int packetSize) {
             case CONTROL_RR0:
             case CONTROL_RR1:
                 // ensure the receiver is requesting the correct frame
-                if ((sequenceNum ^ 1) == (CONTROL_REJ0 & 1)) {
+                if ((ll->sequenceNum ^ 1) == (CONTROL_REJ0 & 1)) {
                     done = TRUE;
                 }
                 else {
@@ -346,8 +354,8 @@ int llwrite(const unsigned char *packet, int packetSize) {
             case CONTROL_REJ0:
             case CONTROL_REJ1:
                 // ensure the receiver is rejecting the correct frame
-                if (sequenceNum == (CONTROL_REJ0 & 1)) {
-                    printf(FAINT "Sent duplicate I-frame #%d.", sequenceNum);
+                if (ll->sequenceNum == (CONTROL_REJ0 & 1)) {
+                    printf(FAINT "Sent duplicate I-frame #%d.", ll->sequenceNum);
                 }
 
             default:
@@ -362,22 +370,19 @@ int llwrite(const unsigned char *packet, int packetSize) {
         return STATUS_ERROR;
     }
 
-    sequenceNum ^= 1; // toggle the sequence number
+    ll->sequenceNum ^= 1; // toggle the sequence number
     return packetSize;
 }
 
-////////////////////////////////////////////////
-// LLREAD
-////////////////////////////////////////////////
-int llread(unsigned char *packet) {
+int llRead(LinkLayer *ll, unsigned char *packet) {
     int bytesRead;
     _Bool done = FALSE;
 
-    for (int attempt = 0; !done && attempt < nRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
         unsigned char address, control;
 
         // receive the packet
-        bytesRead = receiveFrame(&address, &control, packet);
+        bytesRead = receiveFrame(ll, &address, &control, packet);
 
         if (bytesRead < 0) {
             printf(FAINT "Failed to receive the I-frame.");
@@ -400,25 +405,25 @@ int llread(unsigned char *packet) {
             case CONTROL_I0:
             case CONTROL_I1:
                 // verify if the data received is new
-                if (control >> 7 == sequenceNum) {
+                if ((control >> 7) == ll->sequenceNum) {
                     done = TRUE;
                 }
                 else {
-                    printf(FAINT "Received duplicate I-frame #%d.\n", sequenceNum ^ 1);
+                    printf(FAINT "Received duplicate I-frame #%d.\n", ll->sequenceNum ^ 1);
                 }
 
-                control = CONTROL_RR0 | (sequenceNum ^ 1);
+                control = CONTROL_RR0 | (ll->sequenceNum ^ 1);
                 break;
 
             default:
                 printf(FAINT "Received an I-frame with errors.");
-                control = CONTROL_REJ0 | sequenceNum;
+                control = CONTROL_REJ0 | ll->sequenceNum;
 
                 break;
         }
 
         // send the UA frame
-        if (sendFrame(ADDRESS_TX_SEND, control) < 0) {
+        if (sendFrame(ll, ADDRESS_TX_SEND, control) < 0) {
             printf(FAINT "Failed to send the UA frame.");
             done = FALSE;
         }
@@ -430,33 +435,30 @@ int llread(unsigned char *packet) {
         return STATUS_ERROR;
     }
 
-    sequenceNum ^= 1; // toggle the sequence number
+    ll->sequenceNum ^= 1; // toggle the sequence number
     return bytesRead;
 }
 
-////////////////////////////////////////////////
-// LLCLOSE
-////////////////////////////////////////////////
-int llclose(int showStatistics){
+int llClose(LinkLayer *ll, int showStatistics){
     // end communication with the other PC
     _Bool done = FALSE;
 
-    for (int attempt = 0; attempt < nRetransmissions; ++attempt) {
+    for (int attempt = 0; attempt < ll->nRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(FAINT " Trying again...\n" RESET);
         }
 
         unsigned char address, control;
 
-        if (isSender) {
+        if (ll->isSender) {
             // send the DISC frame
-            if (sendFrame(ADDRESS_TX_SEND, CONTROL_DISC) < 0) {
+            if (sendFrame(ll, ADDRESS_TX_SEND, CONTROL_DISC) < 0) {
                 printf(FAINT "Failed to send the DISC frame." RESET);
                 continue;
             }
 
             // receive the receiver's DISC frame
-            if (receiveFrame(&address, &control, NULL) < 0) {
+            if (receiveFrame(ll, &address, &control, NULL) < 0) {
                 printf(FAINT "Failed to receive the receiver's DISC frame." RESET);
                 continue;
             }
@@ -468,20 +470,20 @@ int llclose(int showStatistics){
             }
 
             // send the UA frame
-            if (sendFrame(ADDRESS_RX_SEND, CONTROL_UA) < 0) {
+            if (sendFrame(ll, ADDRESS_RX_SEND, CONTROL_UA) < 0) {
                 printf(FAINT "Failed to send the UA frame." RESET);
                 continue;
             }
         }
         else {
             // send the DISC frame
-            if (sendFrame(ADDRESS_RX_SEND, CONTROL_DISC) < 0) {
+            if (sendFrame(ll, ADDRESS_RX_SEND, CONTROL_DISC) < 0) {
                 printf(FAINT "Failed to send the DISC frame!" RESET);
                 continue;
             }
 
             // receive the UA frame
-            if (receiveFrame(&address, &control, NULL) < 0) {
+            if (receiveFrame(ll, &address, &control, NULL) < 0) {
                 printf(FAINT "Failed to receive the UA frame!\n" RESET);
                 continue;
             }
@@ -497,7 +499,7 @@ int llclose(int showStatistics){
     }
 
     // close the serial port
-    closeSerialPort();
+    //closeSerialPort();
 
     // verify if a timeout occurred
     return done

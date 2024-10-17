@@ -4,7 +4,10 @@
 #ifndef _APPLICATION_LAYER_H_
 #define _APPLICATION_LAYER_H_
 
+#include "link_layer.h"
+
 typedef struct {
+    LinkLayer *ll;
     FILE *file;
     const char *filename;
     const char *filepath;
@@ -20,9 +23,11 @@ typedef struct {
 //   nTries: Maximum number of frame retries.
 //   timeout: Frame timeout.
 //   filename: Name of the file to send / receive.
-ApplicationLayer *applicationLayer(_Bool isSender, const char *filepath, int dataSize);
+ApplicationLayer *appInit(const char *serialPort, _Bool isSender, int baudRate, int nTries, int timeout,
+    const char *filepath, int dataSize);
+int appFree(ApplicationLayer *app);
 
 // Application layer main function
-//int fileTransferProtocol(ApplicationLayer *app, LinkLayer *ll);
+int appRun(ApplicationLayer *app);
 
 #endif // _APPLICATION_LAYER_H_

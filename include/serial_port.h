@@ -12,10 +12,10 @@ typedef struct {
 } SerialPort;
 
 /* API */
-SerialPort *initSerialPort(const char *filename, int baudRate);
-int freeSerialPort(SerialPort *port);
+SerialPort *spInit(const char *filename, int baudRate);
+int spFree(SerialPort *sp);
 
-int writeBytes(SerialPort *port, const unsigned char *data, int numBytes);
-int readByte(SerialPort *port, unsigned char *byte);
+int spWrite(SerialPort *sp, const unsigned char *data, int numBytes);
+int spRead(SerialPort *sp, unsigned char *byte);
 
 #endif // _SERIAL_PORT_H_

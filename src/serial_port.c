@@ -13,7 +13,7 @@
 
 #define _POSIX_SOURCE 1 // POSIX compliant source
 
-SerialPort *initSerialPort(const char *filename, int baudRate) {
+SerialPort *spInit(const char *filename, int baudRate) {
     // open with O_NONBLOCK to avoid hanging when CLOCAL
     // is not yet set on the serial port (changed later)
     int oflags = O_RDWR | O_NOCTTY | O_NONBLOCK;
@@ -118,7 +118,7 @@ SerialPort *initSerialPort(const char *filename, int baudRate) {
     return port;
 }
 
-int freeSerialPort(SerialPort *port) {
+int spFree(SerialPort *port) {
     int statusCode = STATUS_SUCCESS;
 
     // restore the original port settings
@@ -136,14 +136,14 @@ int freeSerialPort(SerialPort *port) {
     return statusCode;
 }
 
-int writeBytes(SerialPort *port, const unsigned char *data, int numBytes) {
+int spWrite(SerialPort *port, const unsigned char *data, int numBytes) {
     // ensure all the bytes were written to the serial port
     return (write(port->fd, data, numBytes * sizeof(unsigned char)) == numBytes)
         ? STATUS_SUCCESS
         : STATUS_ERROR;
 }
 
-int readByte(SerialPort *port, unsigned char *byte) {
+int spRead(SerialPort *port, unsigned char *byte) {
     // ensure a single byte was read from the serial port
     return (read(port->fd, byte, 1) == 1)
         ? STATUS_SUCCESS
