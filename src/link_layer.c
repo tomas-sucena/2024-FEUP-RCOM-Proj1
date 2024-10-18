@@ -25,7 +25,7 @@
 #define CONTROL_REJ1  0x55  
 #define CONTROL_DISC  0x0B
 
-#define ESCAPE   0x5E
+#define ESCAPE   0x7D
 #define XOR_BYTE 0x20
 
 typedef enum {
@@ -57,13 +57,14 @@ static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control
     unsigned char frame[5] = {FLAG, address, control, address ^ control, FLAG};
     
     // send the frame
-    return spWrite(ll->port, frame, 5);
+    return (spWrite(ll->port, frame, 5) == 5)
+        ? STATUS_SUCCESS
+        : STATUS_ERROR;
 }
 
 static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned char *data, int dataSize) {
     // initialize the frame
-    int frameSize = 7 + dataSize * 2;
-    unsigned char *frame = malloc(frameSize * sizeof(unsigned char));
+    unsigned char *frame = (unsigned char *) malloc((7 + dataSize * 2) * sizeof(unsigned char));
 
     // configure the header of the frame
     frame[0] = FLAG;
@@ -118,15 +119,23 @@ static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned ch
 }
 
 /* RECEIVER */
-static int receiveData(LinkLayer *ll, unsigned char *data) {
+static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
     unsigned char BCC = 0;
     _Bool escape = FALSE; // indicates if the next character should be escaped
 
     int index = 0;
 
-    while (alarmIsEnabled) {
-        unsigned char byte;
+    // parse the first data byte
+    if (byte == ESCAPE) {
+        escape = TRUE;
+    }
+    else {
+        data[index++] = byte;
+        BCC = byte; 
+    }
 
+    // receive the remaining data bytes
+    while (alarmIsEnabled) {
         // ensure there were no errors reading the byte
         if (spRead(ll->port, &byte) < 0) {
             continue;
@@ -137,7 +146,7 @@ static int receiveData(LinkLayer *ll, unsigned char *data) {
                 // ensure the BCC is zero, as that means the data is correct
                 // NOTE: x ^ x = 0
                 return (BCC == 0)
-                    ? index
+                    ? (index - 1)
                     : STATUS_ERROR;
 
             case ESCAPE:
@@ -154,6 +163,8 @@ static int receiveData(LinkLayer *ll, unsigned char *data) {
                 // append the byte to the data
                 data[index++] = byte;
                 BCC ^= byte;
+
+                break;
         }
     }
 
@@ -199,8 +210,8 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
             case STATE_CONTROL_RCV:
                 // verify if the current byte is the expected BCC,
                 // that is, if it is the XOR of the previous two bytes
-                if (byte == BCC && receiveData(ll, data) >= 0) {
-                    return STATUS_SUCCESS;
+                if (byte == BCC) {
+                    state = STATE_BCC_OK;
                 }
                 else if (byte == FLAG) {
                     state = STATE_FLAG_RCV;
@@ -220,9 +231,9 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
 
                 // if the current byte is NOT the flag, that means
                 // the frame contains data, so receive it
-                int bytesRead = receiveData(ll, data);
+                int bytesRead = receiveData(ll, data, byte);
 
-                if (bytesRead >= 0) {
+                if (bytesRead > 0) {
                     return bytesRead;
                 }
                 

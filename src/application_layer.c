@@ -44,6 +44,7 @@ static char *getFilename(const char *filepath) {
 
     if (slash == NULL) {
         slash = filepath;
+        --slash;
     }
 
     // initialize the filename
@@ -142,61 +143,66 @@ static int sendControlPacket(ApplicationLayer *app, unsigned char control) {
     return STATUS_ERROR;
 }
 
-static int sendDataPacket(ApplicationLayer *app, const unsigned char *data, int dataSize) {
-    // initialize the data packet
-    int packetSize = 3 + dataSize;
-    unsigned char packet[packetSize];
-    
-    // configure the packet header
-    packet[0] = CONTROL_DATA;
-    packet[1] = dataSize >> 8; // the most significant byte of the data size
-    packet[2] = dataSize;      // the least significant byte of the data size
+static int sendDataPackets(ApplicationLayer *app) {
+    // initialize the buffer that will store the data packets
+    unsigned char *dataPacket = (unsigned char *) malloc((3 + app->dataSize) * sizeof(unsigned char));
 
-    // append the data to the packet
-    memcpy(packet + 3, data, dataSize * sizeof(unsigned char));
-
-    // send the packet via the serial port
-    if (llWrite(app->ll, packet, packetSize) == packetSize) {
-        return STATUS_SUCCESS;
+    if (dataPacket == NULL) {
+        printf(RED "Error! Failed to allocate memory for the data packets." RESET "\n");
+        return STATUS_ERROR;
     }
 
-    // an error occurred in the link layer
-    printf(RED "Error! Failed to send data via the serial port.\n" RESET);
-    return STATUS_ERROR;
+    // write the control byte
+    dataPacket[0] = CONTROL_DATA;
+    
+    // send the data packets
+    int statusCode = STATUS_SUCCESS;
+
+    while (statusCode == STATUS_SUCCESS) {
+        // read data from the file
+        int bytesRead = (int) fread(dataPacket + 3, sizeof(unsigned char), app->dataSize, app->file);
+
+        // verify if we have reached the end of the file
+        if (bytesRead == 0) {
+            break;
+        }
+
+        // write the number of data bytes
+        dataPacket[1] = (unsigned char) (bytesRead >> 8);   // the most significant byte of the data size
+        dataPacket[2] = (unsigned char) (bytesRead & 0xFF); // the least significant byte of the data size
+
+        // send the data via the serial port
+        int bytesWritten = llWrite(app->ll, dataPacket, 3 + bytesRead);
+
+        if (bytesWritten < 0) {
+            printf(RED "Error! Failed to receive data from the serial port.\n" RESET);            
+            statusCode = STATUS_ERROR;
+        }
+    }
+
+    // free the buffer that stored the data packets
+    free(dataPacket);
+    
+    return statusCode;
 }
 
 static int sendFile(ApplicationLayer *app) {
+    printf("\n> Sending '" BOLD "%s" RESET "'...\n", app->filename);
+
     // send the initial control packet
     if (sendControlPacket(app, CONTROL_START) < 0) {
         return STATUS_ERROR;
     }
 
-    // allocate a buffer to store the data from the file
-    unsigned char *data = (unsigned char *) malloc(app->dataSize * sizeof(unsigned char));
-
     // send the data packets
-    for (;;) {
-        int bytesRead = (int) fread(data, sizeof(unsigned char), app->dataSize, app->file);
-
-        // ensure if we have read the entire file
-        if (bytesRead == 0) {
-            break;
-        }
-
-        // send the data to the receiver
-        if (sendDataPacket(app, data, bytesRead) < 0) {
-            return STATUS_ERROR;
-        }
+    if (sendDataPackets(app) < 0) {
+        return STATUS_ERROR;
     }
 
     // send the final control packet
     if (sendControlPacket(app, CONTROL_END) < 0) {
-        free(data);
         return STATUS_ERROR;
     }
-
-    // free the buffer
-    free(data);
 
     printf(GREEN "Success!\n" RESET);
     return STATUS_SUCCESS;
@@ -228,9 +234,10 @@ static int receiveControlPacket(ApplicationLayer *app) {
         // parse the Type and Length fields
         unsigned char T = packet[index++];
         unsigned char L = packet[index++];
-        
+
         // ensure there is no overflow
         if (index + L > packetSize) {
+            printf("hey? %d %d\n", index + L, packetSize);
             printf(RED "Error! Received badly formatted packet.\n" RESET);
             return STATUS_ERROR;
         }
@@ -239,15 +246,13 @@ static int receiveControlPacket(ApplicationLayer *app) {
             // parse the file size
             case TYPE_FILE_SIZE:
                 app->fileSize = readNumber(packet + index, L);
-                printf("\n  " BOLD "- Size: " RESET "%ld\n", app->fileSize);
-
                 break;
 
             // parse the filename
             case TYPE_FILENAME: {
                 char filename[L + 1];
                 
-                memcpy(app->filename, packet + index, L * sizeof(unsigned char));
+                memcpy(filename, packet + index, L * sizeof(unsigned char));
                 filename[L] = '\0';
 
                 // assign the filename if it hasn't been assigned already
@@ -255,14 +260,15 @@ static int receiveControlPacket(ApplicationLayer *app) {
                     app->filename = filename;
                 }
 
-                printf("\n  " BOLD "- Name: " RESET "%s\n", filename);
+                printf("\n> Receiving '" BOLD "%s" RESET "'...\n", filename);
                 break;
             }
 
             // parse the size of a data packet
-            case TYPE_DATA_SIZE:
-                app->dataSize = (int) readNumber(packet + index, L);
+            case TYPE_DATA_SIZE: {
+                app->dataSize = readNumber(packet + index, L);
                 break;
+            }
 
             default:
                 printf(RED "Error! Received badly formatted packet.\n" RESET);
@@ -276,31 +282,28 @@ static int receiveControlPacket(ApplicationLayer *app) {
 }
 
 static int receiveDataPackets(ApplicationLayer *app) {
-    // initialize the buffer where the data packets will be stored
-    unsigned char *packet = malloc(app->dataSize * sizeof(unsigned char));
-
-    if (packet == NULL) {
-        printf(RED "Error! Failed to allocate memory for the data packet.\n" RESET);
+    // initialize the buffer that will store the data packets
+    unsigned char *dataPacket = (unsigned char *) malloc((3 + app->dataSize) * sizeof(unsigned char));
+    
+    if (dataPacket == NULL) {
+        printf(RED "Error! Failed to allocate memory for the data packets." RESET "\n");
         return STATUS_ERROR;
     }
 
     // receive the data packets
     _Bool done = FALSE;
-    int statusCode = STATUS_SUCCESS;
 
     while (!done) {
         // receive data from the serial port
-        int bytesRead = llRead(app->ll, packet);
+        int bytesRead = llRead(app->ll, dataPacket);
 
         if (bytesRead < 0) {
-            printf(RED "Error! Failed to receive data from the serial port.\n" RESET);
-            statusCode = STATUS_ERROR;
-
-            break;
+            printf(RED "Error! Failed to receive data from the serial port.\n" RESET);            
+            return STATUS_ERROR;
         }
 
         // ensure the control byte is valid
-        switch (packet[0]) {
+        switch (dataPacket[0]) {
             case CONTROL_DATA:
                 break;
 
@@ -313,21 +316,16 @@ static int receiveDataPackets(ApplicationLayer *app) {
         }
 
         // compute the number of data bytes received
-        int dataSize = (packet[1] << 8) | packet[2];
+        int dataSize = (dataPacket[1] << 8) | dataPacket[2];
 
         // append the data to the file
-        if (fwrite(packet + 3, sizeof(unsigned char), dataSize, app->file) < dataSize) {
+        if (fwrite(dataPacket + 3, sizeof(unsigned char), dataSize, app->file) < dataSize) {
             printf(RED "Error! Failed to write to '" BOLD "%s" RESET RED "'.\n" RESET, app->filename);
-            statusCode = STATUS_ERROR;
-
-            break;
+            return STATUS_ERROR;
         }
     }
 
-    // free the buffer
-    free(packet);
-
-    return statusCode;
+    return STATUS_SUCCESS;
 }
 
 static int receiveFile(ApplicationLayer *app) {
@@ -404,7 +402,7 @@ ApplicationLayer *appInit(const char *serialPort, _Bool isSender, int baudRate, 
     if (isSender) {
         app->fileSize = getFileSize(file);
     }
-
+    
     return app;
 }
 
@@ -444,8 +442,6 @@ int appRun(ApplicationLayer *app) {
     printf(GREEN "Success!\n" RESET);
 
     // transfer the file between PCs
-    printf("\n> Transferring the file...\n");
-
     isSender
         ? sendFile(app)
         : receiveFile(app);
