@@ -40,7 +40,6 @@ int main(int argc, char *argv[])
         filepath, DEFAULT_DATA_SIZE);
 
     if (app == NULL) {
-        appFree(app);
         return EXIT_FAILURE;
     }
     

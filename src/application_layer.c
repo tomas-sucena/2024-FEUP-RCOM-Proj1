@@ -69,7 +69,7 @@ static long getFileSize(FILE *file) {
 
     // return the file pointer to the beginning of the file
     rewind(file);
-    
+
     return fileSize;
 }
 
@@ -363,13 +363,6 @@ static int receiveFile(ApplicationLayer *app) {
 ////////////////////////////////////////////////
 ApplicationLayer *appInit(const char *serialPort, _Bool isSender, int baudRate, int nTries, int timeout,
     const char *filepath, int dataSize) {
-    // initialize the link layer
-    LinkLayer *ll = llInit(serialPort, isSender, baudRate, nTries, timeout);
-
-    if (ll == NULL) {
-        return NULL;
-    }
-
     // ensure that, if the program is the sender,
     // the file to be transferred exists
     if (isSender && filepath == NULL) {
@@ -388,6 +381,14 @@ ApplicationLayer *appInit(const char *serialPort, _Bool isSender, int baudRate, 
             printf(RED "Error! Could not open '" BOLD "%s" RESET RED "'.\n" RESET, filepath);
             return NULL;
         }
+    }
+
+    // initialize the link layer
+    LinkLayer *ll = llInit(serialPort, isSender, baudRate, nTries, timeout);
+
+    if (ll == NULL) {
+        fclose(file);
+        return NULL;
     }
 
     // initialize the application
