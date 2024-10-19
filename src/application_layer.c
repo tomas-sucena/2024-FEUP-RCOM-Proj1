@@ -22,8 +22,8 @@
  * @param number an integer
  * @return the minimum number of bytes needed to represent the number
  */
-static unsigned char countBytes(long number) {
-    unsigned char bits = 0;
+static byte_t countBytes(long number) {
+    byte_t bits = 0;
 
     for (; number; number >>= 1) {
         ++bits;
@@ -77,20 +77,20 @@ static long getFileSize(FILE *file) {
     return fileSize;
 }
 
-static void writeNumber(unsigned char *data, long number, unsigned char numBytes) {
-    for (unsigned char index = numBytes; index > 0; ) {
+static void writeNumber(byte_t *data, long number, byte_t numBytes) {
+    for (byte_t index = numBytes; index > 0; ) {
         // append the least significant byte of the number
-        data[--index] = (unsigned char) (number & 0xFF);
+        data[--index] = (byte_t) (number & 0xFF);
 
         // shift the number one byte to the right
         number >>= 8;
     }
 }
 
-static long readNumber(unsigned char *data, unsigned char numBytes) {
+static long readNumber(byte_t *data, byte_t numBytes) {
     long number = 0;
 
-    for (unsigned char index = 0; index < numBytes; ++index) {
+    for (byte_t index = 0; index < numBytes; ++index) {
         // shift the number one byte to the left
         // to make space for the next byte
         number <<= 8;
@@ -105,16 +105,16 @@ static long readNumber(unsigned char *data, unsigned char numBytes) {
 ////////////////////////////////////////////////
 // SENDER
 ////////////////////////////////////////////////
-static int sendControlPacket(ApplicationLayer *app, unsigned char control) {
+static int sendControlPacket(ApplicationLayer *app, byte_t control) {
     // compute the size of the packet
-    unsigned char L_fileSize = countBytes(app->fileSize);
-    unsigned char L_filename = strlen(app->filename);
-    unsigned char L_dataSize = countBytes(app->dataSize);
+    byte_t L_fileSize = countBytes(app->fileSize);
+    byte_t L_filename = strlen(app->filename);
+    byte_t L_dataSize = countBytes(app->dataSize);
 
     int packetSize = 7 + L_fileSize + L_filename + L_dataSize;
 
     // initialize the packet
-    unsigned char packet[MAX_PAYLOAD_SIZE], *ptr = packet;
+    byte_t packet[MAX_PAYLOAD_SIZE], *ptr = packet;
     *ptr++ = control;
 
     // write the TLV (Type-Length-Value) corresponding to the file size
@@ -128,7 +128,7 @@ static int sendControlPacket(ApplicationLayer *app, unsigned char control) {
     *ptr++ = TYPE_FILENAME;
     *ptr++ = L_filename;
 
-    memcpy(ptr, app->filename, L_filename * sizeof(unsigned char));
+    memcpy(ptr, app->filename, L_filename * sizeof(byte_t));
     ptr += L_filename;
 
     // write the TLV corresponding to the size of each data packet
@@ -149,7 +149,7 @@ static int sendControlPacket(ApplicationLayer *app, unsigned char control) {
 
 static int sendDataPackets(ApplicationLayer *app) {
     // initialize the buffer that will store the data packets
-    unsigned char *dataPacket = (unsigned char *) malloc((3 + app->dataSize) * sizeof(unsigned char));
+    byte_t *dataPacket = (byte_t *) malloc((3 + app->dataSize) * sizeof(byte_t));
 
     if (dataPacket == NULL) {
         printf(RED "Error! Failed to allocate memory for the data packets." RESET "\n");
@@ -164,7 +164,7 @@ static int sendDataPackets(ApplicationLayer *app) {
 
     while (statusCode == STATUS_SUCCESS) {
         // read data from the file
-        int bytesRead = (int) fread(dataPacket + 3, sizeof(unsigned char), app->dataSize, app->file);
+        int bytesRead = (int) fread(dataPacket + 3, sizeof(byte_t), app->dataSize, app->file);
 
         // verify if we have reached the end of the file
         if (bytesRead == 0) {
@@ -172,8 +172,8 @@ static int sendDataPackets(ApplicationLayer *app) {
         }
 
         // write the number of data bytes
-        dataPacket[1] = (unsigned char) (bytesRead >> 8);   // the most significant byte of the data size
-        dataPacket[2] = (unsigned char) (bytesRead & 0xFF); // the least significant byte of the data size
+        dataPacket[1] = (byte_t) (bytesRead >> 8);   // the most significant byte of the data size
+        dataPacket[2] = (byte_t) (bytesRead & 0xFF); // the least significant byte of the data size
 
         // send the data via the serial port
         int bytesWritten = llWrite(app->ll, dataPacket, 3 + bytesRead);
@@ -217,7 +217,7 @@ static int sendFile(ApplicationLayer *app) {
 ////////////////////////////////////////////////
 static int receiveControlPacket(ApplicationLayer *app) {
     // receive data from the serial port
-    unsigned char packet[MAX_PAYLOAD_SIZE];
+    byte_t packet[MAX_PAYLOAD_SIZE];
     int packetSize = llRead(app->ll, packet);
 
     if (packetSize <= 0) {
@@ -236,8 +236,8 @@ static int receiveControlPacket(ApplicationLayer *app) {
 
     while (index < packetSize) {
         // parse the Type and Length fields
-        unsigned char T = packet[index++];
-        unsigned char L = packet[index++];
+        byte_t T = packet[index++];
+        byte_t L = packet[index++];
 
         // ensure there is no overflow
         if (index + L > packetSize) {
@@ -287,7 +287,7 @@ static int receiveControlPacket(ApplicationLayer *app) {
 
 static int receiveDataPackets(ApplicationLayer *app) {
     // initialize the buffer that will store the data packets
-    unsigned char *dataPacket = (unsigned char *) malloc((3 + app->dataSize) * sizeof(unsigned char));
+    byte_t *dataPacket = (byte_t *) malloc((3 + app->dataSize) * sizeof(byte_t));
     
     if (dataPacket == NULL) {
         printf(RED "Error! Failed to allocate memory for the data packets." RESET "\n");
@@ -323,7 +323,7 @@ static int receiveDataPackets(ApplicationLayer *app) {
         int dataSize = (dataPacket[1] << 8) | dataPacket[2];
 
         // append the data to the file
-        if (fwrite(dataPacket + 3, sizeof(unsigned char), dataSize, app->file) < dataSize) {
+        if (fwrite(dataPacket + 3, sizeof(byte_t), dataSize, app->file) < dataSize) {
             printf(RED "Error! Failed to write to '" BOLD "%s" RESET RED "'.\n" RESET, app->filename);
             return STATUS_ERROR;
         }

@@ -12,13 +12,13 @@
 #define DEFAULT_TIMEOUT 4
 #define DEFAULT_DATA_SIZE 2000
 
-// Arguments:
-//   $1: /dev/ttySxx
-//   $2: baud rate
-//   $3: tx | rx
-//   $4: filename
 int main(int argc, char *argv[])
 {
+    // Arguments:
+    //   $1: /dev/ttySxx
+    //   $2: baud rate
+    //   $3: tx | rx
+    //   $4: filename
     if (argc < 4) {
         printf("Usage: %s /dev/ttySxx baudrate tx|rx filepath\n", argv[0]);
         return EXIT_FAILURE;
@@ -49,7 +49,7 @@ int main(int argc, char *argv[])
            BOLD "  - Role:" RESET " %s\n"
            BOLD "  - Baudrate:" RESET " %d Hz\n"
            BOLD "  - Number of tries:" RESET " %d\n"
-           BOLD "  - Timeout:" RESET " %d s\n"
+           BOLD "  - Timeout:" RESET " %ds\n"
            BOLD "  - File:" RESET " %s\n",
            serialPort,
            role,

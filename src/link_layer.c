@@ -52,21 +52,58 @@ static void setAlarm(int time) {
 }
 
 ////////////////////////////////////////////////
-// SENDER
+// STATISTICS
 ////////////////////////////////////////////////
-static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control) {
-    // initialize and configure the frame
-    unsigned char frame[5] = {FLAG, address, control, address ^ control, FLAG};
+void printStatistics(LinkLayer *ll) {
+    // compute and print the time elapsed
+    struct timeval endTime;
+    gettimeofday(&endTime, NULL);
+
+    struct timeval timeElapsed;
+    timersub(&endTime, &ll->startTime, &timeElapsed);
+
+    time_t minutes = timeElapsed.tv_sec / 60;
+    time_t seconds = timeElapsed.tv_sec % 60;
+    time_t milliseconds = timeElapsed.tv_usec / 1000;
+
+    printf("  " BOLD "- Time:" RESET);
+
+    if (minutes > 0) {
+        printf(" %ldmin", minutes);
+    }
     
-    // send the frame
-    return (spWrite(ll->port, frame, 5) == 5)
-        ? STATUS_SUCCESS
-        : STATUS_ERROR;
+    printf(" %lds %ldms\n", seconds, milliseconds);
+
+    // print the remaining statistics
+    printf("  " BOLD "- Total Frames:" RESET " %d\n", ll->numFramesTransmitted + ll->numFramesReceived);    
+
+    if (ll->isSender) {
+        printf("  " BOLD "- Frames transmitted:" RESET " %d\n", ll->numFramesTransmitted);
+    }
+    else {
+        printf("  " BOLD "- Frames received:" RESET " %d\n", ll->numFramesReceived);
+    }
 }
 
-static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned char *data, int dataSize) {
+////////////////////////////////////////////////
+// SENDER
+////////////////////////////////////////////////
+static int sendFrame(LinkLayer *ll, byte_t address, byte_t control) {
+    // initialize and configure the frame
+    byte_t frame[5] = {FLAG, address, control, address ^ control, FLAG};
+    
+    // send the frame
+    if (spWrite(ll->port, frame, 5) < 5) {
+        return STATUS_ERROR;
+    }
+
+    ++ll->numFramesTransmitted;
+    return STATUS_SUCCESS;
+}
+
+static int sendDataFrame(LinkLayer *ll, byte_t control, const byte_t *data, int dataSize) {
     // initialize the frame
-    unsigned char *frame = (unsigned char *) malloc((7 + dataSize * 2) * sizeof(unsigned char));
+    byte_t *frame = (byte_t *) malloc((7 + dataSize * 2) * sizeof(byte_t));
 
     // configure the header of the frame
     frame[0] = FLAG;
@@ -77,10 +114,10 @@ static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned ch
 
     // append the data to the frame
     int index = 4;
-    unsigned char BCC = 0;
+    byte_t BCC = 0;
 
     for (int i = 0; i < dataSize; ++i) {
-        unsigned char byte = data[i];
+        byte_t byte = data[i];
         BCC ^= byte;
 
         switch (byte) {
@@ -117,14 +154,16 @@ static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned ch
     }
 
     free(frame);
+    ++ll->numFramesTransmitted;
+
     return STATUS_SUCCESS;
 }
 
 ////////////////////////////////////////////////
 // RECEIVER
 ////////////////////////////////////////////////
-static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
-    unsigned char BCC = 0;
+static int receiveData(LinkLayer *ll, byte_t *data, byte_t byte) {
+    byte_t BCC = 0;
     _Bool escape = FALSE; // indicates if the next character should be escaped
 
     int index = 0;
@@ -172,18 +211,19 @@ static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
         }
     }
 
+    ++ll->numTimeouts;
     return STATUS_ERROR; // a timeout occurred
 }
 
-static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *control, unsigned char *data) {
+static int receiveFrame(LinkLayer *ll, byte_t *address, byte_t *control, byte_t *data) {
     State state = STATE_START;
-    unsigned char BCC;
+    byte_t BCC;
 
     // activate the alarm
     setAlarm(ll->timeout);
 
     while (alarmIsEnabled)  {
-        unsigned char byte;
+        byte_t byte;
         
         // ensure there were no errors reading the byte
         if (spRead(ll->port, &byte) <= 0) {
@@ -230,6 +270,7 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
                 // verify if the current byte is the flag, that is,
                 // if we have reached the end of the frame
                 if (byte == FLAG) {
+                    ++ll->numFramesReceived;
                     return STATUS_SUCCESS;
                 }
 
@@ -238,6 +279,7 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
                 int bytesRead = receiveData(ll, data, byte);
 
                 if (bytesRead > 0) {
+                    ++ll->numFramesReceived;
                     return bytesRead;
                 }
                 
@@ -248,13 +290,14 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
         }
     }
 
+    
     return STATUS_ERROR; // a timeout occurred
 }
 
 ////////////////////////////////////////////////
 // API
 ////////////////////////////////////////////////
-LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int nRetransmissions, int timeout) {
+LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int numRetransmissions, int timeout) {
     // open the serial port
     SerialPort *port = spInit(serialPort, baudRate);
 
@@ -267,9 +310,13 @@ LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int nRet
 
     ll->port = port;
     ll->isSender = isSender;
-    ll->nRetransmissions = nRetransmissions;
+    ll->numRetransmissions = numRetransmissions;
     ll->timeout = timeout;
     ll->sequenceNum = 0;
+    
+    gettimeofday(&ll->startTime, NULL);
+    ll->numFramesTransmitted = 0;
+    ll->numFramesReceived = 0;
 
     return ll;
 }
@@ -286,12 +333,12 @@ int llOpen(LinkLayer *ll) {
     // establish communication with the other PC
     _Bool done = FALSE;
 
-    for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < ll->numRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(" Trying again..." RESET "\n");
         }
 
-        unsigned char address, control;
+        byte_t address, control;
 
         if (ll->isSender) {
             // send the SET frame
@@ -344,15 +391,15 @@ int llOpen(LinkLayer *ll) {
     return STATUS_SUCCESS;
 }
 
-int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
+int llWrite(LinkLayer *ll, const byte_t *packet, int packetSize) {
     _Bool done = FALSE;
 
-    for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < ll->numRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(" Trying again..." RESET "\n");
         }
 
-        unsigned char address, control;
+        byte_t address, control;
 
         // send the packet
         if (sendDataFrame(ll, ll->sequenceNum << 7, packet, packetSize) < 0) {
@@ -409,16 +456,16 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
     return packetSize;
 }
 
-int llRead(LinkLayer *ll, unsigned char *packet) {
+int llRead(LinkLayer *ll, byte_t *packet) {
     int bytesRead;
     _Bool done = FALSE;
 
-    for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < ll->numRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(" Trying again..." RESET "\n");
         }
 
-        unsigned char address, control;
+        byte_t address, control;
 
         // receive the packet
         bytesRead = receiveFrame(ll, &address, &control, packet);
@@ -482,12 +529,12 @@ int llClose(LinkLayer *ll, int showStatistics){
     // end communication with the other PC
     _Bool done = FALSE;
 
-    for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < ll->numRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(" Trying again..." RESET "\n");
         }
 
-        unsigned char address, control;
+        byte_t address, control;
 
         if (ll->isSender) {
             // send the DISC frame
@@ -541,6 +588,10 @@ int llClose(LinkLayer *ll, int showStatistics){
     if (!done) {
         putchar('\n');
         return STATUS_ERROR;
+    }
+
+    if (showStatistics) {
+        printStatistics(ll);
     }
 
     return STATUS_SUCCESS;

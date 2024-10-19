@@ -136,12 +136,12 @@ int spFree(SerialPort *port) {
     return statusCode;
 }
 
-int spWrite(SerialPort *port, const unsigned char *data, int numBytes) {
+int spWrite(SerialPort *port, const byte_t *data, int numBytes) {
     // ensure all the bytes were written to the serial port
-    return write(port->fd, data, numBytes * sizeof(unsigned char));
+    return write(port->fd, data, numBytes * sizeof(byte_t));
 }
 
-int spRead(SerialPort *port, unsigned char *byte) {
+int spRead(SerialPort *port, byte_t *byte) {
     // ensure a single byte was read from the serial port
     return read(port->fd, byte, 1);
 }

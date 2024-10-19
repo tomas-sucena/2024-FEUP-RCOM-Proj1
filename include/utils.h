@@ -1,6 +1,8 @@
 #ifndef _UTILS_H_
 #define _UTILS_H_
 
+typedef unsigned char byte_t;
+
 // boolean values
 #define FALSE 0
 #define TRUE  1

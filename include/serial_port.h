@@ -3,6 +3,8 @@
 
 #include <termios.h>
 
+#include "utils.h"
+
 /**
  * @brief A struct that represents the serial port.
  */
@@ -15,7 +17,7 @@ typedef struct {
 SerialPort *spInit(const char *filename, int baudRate);
 int spFree(SerialPort *sp);
 
-int spWrite(SerialPort *sp, const unsigned char *data, int numBytes);
-int spRead(SerialPort *sp, unsigned char *byte);
+int spWrite(SerialPort *sp, const byte_t *data, int numBytes);
+int spRead(SerialPort *sp, byte_t *byte);
 
 #endif // _SERIAL_PORT_H_
