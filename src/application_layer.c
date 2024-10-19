@@ -29,7 +29,7 @@ static unsigned char countBytes(long number) {
         ++bits;
     }
 
-    return bits / 8; // NOTE: 1B = 8b
+    return 1 + (bits - 1) / 8; // NOTE: 1B = 8b
 }
 
 /**
@@ -39,6 +39,10 @@ static unsigned char countBytes(long number) {
  * @return the filename
  */
 static char *getFilename(const char *filepath) {
+    if (filepath == NULL) {
+        return NULL;
+    }
+
     // find the last occurrence of the '/' character
     const char *slash = strrchr(filepath, '/');
 
@@ -237,7 +241,6 @@ static int receiveControlPacket(ApplicationLayer *app) {
 
         // ensure there is no overflow
         if (index + L > packetSize) {
-            printf("hey? %d %d\n", index + L, packetSize);
             printf(RED "Error! Received badly formatted packet.\n" RESET);
             return STATUS_ERROR;
         }
@@ -264,11 +267,10 @@ static int receiveControlPacket(ApplicationLayer *app) {
                 break;
             }
 
-            // parse the size of a data packet
-            case TYPE_DATA_SIZE: {
+            // parse the maximum number of data bytes that will be sent in a data packet
+            case TYPE_DATA_SIZE:
                 app->dataSize = readNumber(packet + index, L);
                 break;
-            }
 
             default:
                 printf(RED "Error! Received badly formatted packet.\n" RESET);

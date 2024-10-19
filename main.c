@@ -10,7 +10,7 @@
 
 #define DEFAULT_N_TRIES 3
 #define DEFAULT_TIMEOUT 4
-#define DEFAULT_DATA_SIZE 200
+#define DEFAULT_DATA_SIZE 1000
 
 // Arguments:
 //   $1: /dev/ttySxx
@@ -20,7 +20,7 @@
 int main(int argc, char *argv[])
 {
     if (argc < 4) {
-        printf("Usage: %s /dev/ttySxx baudrate tx|rx filename\n", argv[0]);
+        printf("Usage: %s /dev/ttySxx baudrate tx|rx filepath\n", argv[0]);
         return EXIT_FAILURE;
     }
 
