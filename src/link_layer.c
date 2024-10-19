@@ -51,7 +51,9 @@ static void setAlarm(int time) {
     alarmIsEnabled = TRUE;
 }
 
-/* SENDER */
+////////////////////////////////////////////////
+// SENDER
+////////////////////////////////////////////////
 static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control) {
     // initialize and configure the frame
     unsigned char frame[5] = {FLAG, address, control, address ^ control, FLAG};
@@ -118,7 +120,9 @@ static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned ch
     return STATUS_SUCCESS;
 }
 
-/* RECEIVER */
+////////////////////////////////////////////////
+// RECEIVER
+////////////////////////////////////////////////
 static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
     unsigned char BCC = 0;
     _Bool escape = FALSE; // indicates if the next character should be escaped
@@ -284,7 +288,7 @@ int llOpen(LinkLayer *ll) {
 
     for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
         if (attempt > 0) {
-            printf(" Trying again...\n");
+            printf(" Trying again..." RESET "\n");
         }
 
         unsigned char address, control;
@@ -345,7 +349,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
 
     for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
         if (attempt > 0) {
-            printf(" Trying again...\n");
+            printf(" Trying again..." RESET "\n");
         }
 
         unsigned char address, control;
@@ -411,7 +415,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
 
     for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
         if (attempt > 0) {
-            printf(" Trying again...\n");
+            printf(" Trying again..." RESET "\n");
         }
 
         unsigned char address, control;
@@ -480,7 +484,7 @@ int llClose(LinkLayer *ll, int showStatistics){
 
     for (int attempt = 0; !done && attempt < ll->nRetransmissions; ++attempt) {
         if (attempt > 0) {
-            printf(FAINT " Trying again...\n" RESET);
+            printf(" Trying again..." RESET "\n");
         }
 
         unsigned char address, control;

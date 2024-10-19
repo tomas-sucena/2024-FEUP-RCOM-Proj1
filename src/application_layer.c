@@ -255,12 +255,14 @@ static int receiveControlPacket(ApplicationLayer *app) {
             case TYPE_FILENAME: {
                 char filename[L + 1];
                 
-                memcpy(filename, packet + index, L * sizeof(unsigned char));
+                memcpy(filename, packet + index, L * sizeof(char));
                 filename[L] = '\0';
 
-                // assign the filename if it hasn't been assigned already
+                // if the filename has not been set yet,
+                // assign it the received filename
                 if (app->filename == NULL) {
-                    app->filename = filename;
+                    app->filename = (char *) malloc((L + 1) * sizeof(char));
+                    strcpy(app->filename, filename);
                 }
 
                 printf("\n> Receiving '" BOLD "%s" RESET "'...\n", filename);

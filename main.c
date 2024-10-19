@@ -10,7 +10,7 @@
 
 #define DEFAULT_N_TRIES 3
 #define DEFAULT_TIMEOUT 4
-#define DEFAULT_DATA_SIZE 1000
+#define DEFAULT_DATA_SIZE 2000
 
 // Arguments:
 //   $1: /dev/ttySxx
