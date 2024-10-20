@@ -15,15 +15,18 @@
 #define ADDRESS_TX_SEND 0x03
 #define ADDRESS_RX_SEND 0x01
 
-#define CONTROL_SET   0x03
-#define CONTROL_UA    0x07
-#define CONTROL_I0    0x00
-#define CONTROL_I1    0x80
-#define CONTROL_RR0   0xAA
-#define CONTROL_RR1   0xAB  
-#define CONTROL_REJ0  0x54
-#define CONTROL_REJ1  0x55  
-#define CONTROL_DISC  0x0B
+#define CONTROL_SET     0x03
+#define CONTROL_UA      0x07
+#define CONTROL_I0      0x00
+#define CONTROL_I1      0x80
+#define CONTROL_I(n)    (n << 7)  
+#define CONTROL_RR0     0xAA
+#define CONTROL_RR1     0xAB
+#define CONTROL_RR(n)   (CONTROL_RR0 | (n))  
+#define CONTROL_REJ0    0x54
+#define CONTROL_REJ1    0x55
+#define CONTROL_REJ(n)  (CONTROL_REJ0 | (n))  
+#define CONTROL_DISC    0x0B
 
 #define ESCAPE   0x7D
 #define XOR_BYTE 0x20
@@ -411,7 +414,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
         unsigned char address, control;
 
         // send the packet
-        if (sendDataFrame(ll, ll->sequenceNum << 7, packet, packetSize) < 0) {
+        if (sendDataFrame(ll, CONTROL_I(ll->sequenceNum), packet, packetSize) < 0) {
             printf(FAINT "Failed to send the I-frame.");
             continue;
         }
@@ -437,7 +440,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
             case CONTROL_RR0:
             case CONTROL_RR1:
                 // ensure the receiver is requesting the correct frame
-                if (control == (CONTROL_RR0 | (ll->sequenceNum ^ 1))) {
+                if (control == CONTROL_RR(ll->sequenceNum ^ 1)) {
                     done = TRUE;
                 }
                 else {
@@ -450,7 +453,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
             case CONTROL_REJ0:
             case CONTROL_REJ1:
                 // ensure the receiver is rejecting the correct frame
-                if (control == (CONTROL_REJ0 | ll->sequenceNum)) {
+                if (control == CONTROL_REJ(ll->sequenceNum)) {
                     printf(FAINT "Sent duplicate I-frame #%d.", ll->sequenceNum);
                 }
 
@@ -517,14 +520,14 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
                     printf(FAINT "Received duplicate I-frame #%d.", ll->sequenceNum ^ 1);
                 }
 
-                control = CONTROL_RR0 | (ll->sequenceNum ^ 1);
+                control = CONTROL_RR(ll->sequenceNum ^ 1);
                 break;
 
             default:
                 printf(FAINT "Received an I-frame with errors.");
-                control = CONTROL_REJ0 | ll->sequenceNum;
-                ++ll->numFramesRejected;
+                control = CONTROL_REJ(ll->sequenceNum);
 
+                ++ll->numFramesRejected;
                 break;
         }
 
