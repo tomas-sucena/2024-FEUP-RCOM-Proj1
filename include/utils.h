@@ -15,9 +15,13 @@
 #define GREEN   "\e[0;32m"
 #define YELLOW  "\e[0;33m"
 
-// formatting
+// character formatting
 #define RESET   "\e[0m"
 #define BOLD    "\e[1m"
 #define FAINT   "\e[2m"
+
+// line formatting
+#define ERASE_LINE "\e[2K"
+#define LINE_UP    "\e[1F" 
 
 #endif // _UTILS_H_

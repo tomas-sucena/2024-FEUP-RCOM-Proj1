@@ -10,7 +10,7 @@
 
 #define DEFAULT_N_TRIES 3
 #define DEFAULT_TIMEOUT 4
-#define DEFAULT_DATA_SIZE 2000
+#define DEFAULT_DATA_SIZE 200
 
 int main(int argc, char *argv[])
 {

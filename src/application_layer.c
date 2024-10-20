@@ -17,6 +17,8 @@
 #define TYPE_FILENAME  1
 #define TYPE_DATA_SIZE 2
 
+#define PROGRESS_BAR_SIZE 40
+
 /**
  * @brief Returns the minimum number of bytes needed to represent a number.
  * @param number an integer
@@ -100,6 +102,24 @@ static long readNumber(unsigned char *data, unsigned char numBytes) {
     }
 
     return number;
+}
+
+static void printProgress(long numBytesTransferred, long fileSize) {
+    // compute the percentage of the file that has been transferred
+    double percentage = 100 * (double) numBytesTransferred / (double) fileSize;
+
+    // compute the number of spaces in the progress bar that should be filled
+    int numFilledSpaces = (int) percentage * PROGRESS_BAR_SIZE / 100;    
+
+    // initialize and fill the progress bar
+    char progressBar[PROGRESS_BAR_SIZE];
+    
+    memset(progressBar, '=', numFilledSpaces * sizeof(char));
+    memset(progressBar + numFilledSpaces, '-', (PROGRESS_BAR_SIZE - numFilledSpaces) * sizeof(char));
+
+    // print the progress bar
+    printf(LINE_UP ERASE_LINE "\r[%s] %.2f%% | %ld/%ld B\n",
+        progressBar, percentage, numBytesTransferred, fileSize);
 }
 
 ////////////////////////////////////////////////
@@ -296,8 +316,14 @@ static int receiveDataPackets(ApplicationLayer *app) {
 
     // receive the data packets
     _Bool done = FALSE;
+    long totalBytesRead = 0;
 
-    while (!done) {
+    putchar('\n');
+
+    do {
+        // print the current progress
+        printProgress(totalBytesRead, app->fileSize);
+
         // receive data from the serial port
         int bytesRead = llRead(app->ll, dataPacket);
 
@@ -327,7 +353,10 @@ static int receiveDataPackets(ApplicationLayer *app) {
             printf(RED "Error! Failed to write to '" BOLD "%s" RESET RED "'.\n" RESET, app->filename);
             return STATUS_ERROR;
         }
+
+        totalBytesRead += dataSize;
     }
+    while (!done);
 
     // free the buffer that stored the data packets
     free(dataPacket);
