@@ -18,8 +18,9 @@ typedef struct {
     // for statistical purposes
     struct timeval startTime; /** the time when the program starts */
     int numFramesTransmitted;
+    int numFramesRetransmitted;
     int numFramesReceived;
-    int numFramesR;
+    int numFramesRejected;
     int numTimeouts;
 } LinkLayer;
 
@@ -32,8 +33,8 @@ LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int numR
 int llFree(LinkLayer *ll);
 
 int llOpen(LinkLayer *ll);
-int llWrite(LinkLayer *ll, const byte_t *packet, int packetSize);
-int llRead(LinkLayer *ll, byte_t *packet);
+int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize);
+int llRead(LinkLayer *ll, unsigned char *packet);
 int llClose(LinkLayer *ll, int showStatistics);
 
 #endif // _LINK_LAYER_H_

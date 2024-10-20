@@ -27,7 +27,9 @@ int main(int argc, char *argv[])
     const char *serialPort = argv[1];
     const int baudrate = atoi(argv[2]);
     const char *role = argv[3];
-    const char *filepath = (argc < 5) ? NULL : argv[4];
+    const char *filepath = (argc < 5)
+        ? NULL
+        : argv[4];
 
     // validate the role
     if (strcmp("tx", role) != 0 && strcmp("rx", role) != 0) {

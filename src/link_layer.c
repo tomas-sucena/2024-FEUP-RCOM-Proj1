@@ -75,22 +75,22 @@ void printStatistics(LinkLayer *ll) {
     printf(" %lds %ldms\n", seconds, milliseconds);
 
     // print the remaining statistics
-    printf("  " BOLD "- Total Frames:" RESET " %d\n", ll->numFramesTransmitted + ll->numFramesReceived);    
+    double FER = 100 * (double) (ll->numFramesRejected) / (double) (ll->numFramesReceived);
 
-    if (ll->isSender) {
-        printf("  " BOLD "- Frames transmitted:" RESET " %d\n", ll->numFramesTransmitted);
-    }
-    else {
-        printf("  " BOLD "- Frames received:" RESET " %d\n", ll->numFramesReceived);
-    }
+    printf("  " BOLD "- Frames transmitted:" RESET " %d\n", ll->numFramesTransmitted);
+    printf("  " BOLD "- Frames retransmitted:" RESET " %d\n", ll->numFramesRetransmitted);
+    printf("  " BOLD "- Frames received:" RESET " %d\n", ll->numFramesReceived);
+    printf("  " BOLD "- Frames rejected:" RESET " %d\n", ll->numFramesRejected);
+    printf("  " BOLD "- Frame Error Ratio (FER):" RESET " %.2f%%\n", FER);
+    printf("  " BOLD "- Timeouts:" RESET " %d\n", ll->numTimeouts);    
 }
 
 ////////////////////////////////////////////////
 // SENDER
 ////////////////////////////////////////////////
-static int sendFrame(LinkLayer *ll, byte_t address, byte_t control) {
+static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control) {
     // initialize and configure the frame
-    byte_t frame[5] = {FLAG, address, control, address ^ control, FLAG};
+    unsigned char frame[5] = {FLAG, address, control, address ^ control, FLAG};
     
     // send the frame
     if (spWrite(ll->port, frame, 5) < 5) {
@@ -101,9 +101,9 @@ static int sendFrame(LinkLayer *ll, byte_t address, byte_t control) {
     return STATUS_SUCCESS;
 }
 
-static int sendDataFrame(LinkLayer *ll, byte_t control, const byte_t *data, int dataSize) {
+static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned char *data, int dataSize) {
     // initialize the frame
-    byte_t *frame = (byte_t *) malloc((7 + dataSize * 2) * sizeof(byte_t));
+    unsigned char *frame = (unsigned char *) malloc((7 + dataSize * 2) * sizeof(unsigned char));
 
     // configure the header of the frame
     frame[0] = FLAG;
@@ -114,10 +114,10 @@ static int sendDataFrame(LinkLayer *ll, byte_t control, const byte_t *data, int 
 
     // append the data to the frame
     int index = 4;
-    byte_t BCC = 0;
+    unsigned char BCC = 0;
 
     for (int i = 0; i < dataSize; ++i) {
-        byte_t byte = data[i];
+        unsigned char byte = data[i];
         BCC ^= byte;
 
         switch (byte) {
@@ -162,8 +162,8 @@ static int sendDataFrame(LinkLayer *ll, byte_t control, const byte_t *data, int 
 ////////////////////////////////////////////////
 // RECEIVER
 ////////////////////////////////////////////////
-static int receiveData(LinkLayer *ll, byte_t *data, byte_t byte) {
-    byte_t BCC = 0;
+static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
+    unsigned char BCC = 0;
     _Bool escape = FALSE; // indicates if the next character should be escaped
 
     int index = 0;
@@ -211,19 +211,18 @@ static int receiveData(LinkLayer *ll, byte_t *data, byte_t byte) {
         }
     }
 
-    ++ll->numTimeouts;
     return STATUS_ERROR; // a timeout occurred
 }
 
-static int receiveFrame(LinkLayer *ll, byte_t *address, byte_t *control, byte_t *data) {
+static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *control, unsigned char *data) {
     State state = STATE_START;
-    byte_t BCC;
+    unsigned char BCC;
 
     // activate the alarm
     setAlarm(ll->timeout);
 
     while (alarmIsEnabled)  {
-        byte_t byte;
+        unsigned char byte;
         
         // ensure there were no errors reading the byte
         if (spRead(ll->port, &byte) <= 0) {
@@ -290,7 +289,7 @@ static int receiveFrame(LinkLayer *ll, byte_t *address, byte_t *control, byte_t 
         }
     }
 
-    
+    ++ll->numTimeouts;
     return STATUS_ERROR; // a timeout occurred
 }
 
@@ -338,7 +337,8 @@ int llOpen(LinkLayer *ll) {
             printf(" Trying again..." RESET "\n");
         }
 
-        byte_t address, control;
+        _Bool retransmission = (attempt > 0);
+        unsigned char address, control;
 
         if (ll->isSender) {
             // send the SET frame
@@ -346,6 +346,8 @@ int llOpen(LinkLayer *ll) {
                 printf(FAINT "Failed to send the SET frame.");
                 continue;
             }
+
+            ll->numFramesRetransmitted += retransmission;
 
             // receive the UA frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
@@ -356,6 +358,8 @@ int llOpen(LinkLayer *ll) {
             // ensure the UA frame is correct
             if (address != ADDRESS_TX_SEND || control != CONTROL_UA) {
                 printf(FAINT "Received a UA frame with errors.");
+                ++ll->numFramesRejected;
+
                 continue;
             }
         }
@@ -369,6 +373,8 @@ int llOpen(LinkLayer *ll) {
             // ensure the SET frame is correct
             if (address != ADDRESS_TX_SEND || control != CONTROL_SET) {
                 printf(FAINT "Received a UA frame with errors.");
+                ++ll->numFramesRejected;
+
                 continue;
             }
 
@@ -377,6 +383,8 @@ int llOpen(LinkLayer *ll) {
                 printf(FAINT "Failed to send the UA frame.");
                 continue;
             }
+
+            ll->numFramesRetransmitted += retransmission;
         }
 
         done = TRUE;
@@ -391,7 +399,7 @@ int llOpen(LinkLayer *ll) {
     return STATUS_SUCCESS;
 }
 
-int llWrite(LinkLayer *ll, const byte_t *packet, int packetSize) {
+int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
     _Bool done = FALSE;
 
     for (int attempt = 0; !done && attempt < ll->numRetransmissions; ++attempt) {
@@ -399,13 +407,16 @@ int llWrite(LinkLayer *ll, const byte_t *packet, int packetSize) {
             printf(" Trying again..." RESET "\n");
         }
 
-        byte_t address, control;
+        _Bool retransmission = (attempt > 0);
+        unsigned char address, control;
 
         // send the packet
         if (sendDataFrame(ll, ll->sequenceNum << 7, packet, packetSize) < 0) {
             printf(FAINT "Failed to send the I-frame.");
             continue;
         }
+
+        ll->numFramesRetransmitted += retransmission;
 
         // receive the UA frame
         if (receiveFrame(ll, &address, &control, NULL) < 0) {
@@ -416,6 +427,8 @@ int llWrite(LinkLayer *ll, const byte_t *packet, int packetSize) {
         // ensure the address of the UA frame is correct
         if (address != ADDRESS_TX_SEND) {
             printf(FAINT "Received a UA frame with errors.");
+            ++ll->numFramesRejected;
+
             continue;
         }
 
@@ -429,6 +442,7 @@ int llWrite(LinkLayer *ll, const byte_t *packet, int packetSize) {
                 }
                 else {
                     printf(FAINT "Received a UA frame with errors.");
+                    ++ll->numFramesRejected;
                 }
 
                 break;
@@ -442,6 +456,8 @@ int llWrite(LinkLayer *ll, const byte_t *packet, int packetSize) {
 
             default:
                 printf(FAINT "Received a UA frame with errors.");
+                ++ll->numFramesRejected;
+
                 break;
         }
     }
@@ -456,7 +472,7 @@ int llWrite(LinkLayer *ll, const byte_t *packet, int packetSize) {
     return packetSize;
 }
 
-int llRead(LinkLayer *ll, byte_t *packet) {
+int llRead(LinkLayer *ll, unsigned char *packet) {
     int bytesRead;
     _Bool done = FALSE;
 
@@ -465,7 +481,8 @@ int llRead(LinkLayer *ll, byte_t *packet) {
             printf(" Trying again..." RESET "\n");
         }
 
-        byte_t address, control;
+        _Bool retransmission = (attempt > 0);
+        unsigned char address, control;
 
         // receive the packet
         bytesRead = receiveFrame(ll, &address, &control, packet);
@@ -478,6 +495,8 @@ int llRead(LinkLayer *ll, byte_t *packet) {
         // ensure the address of the I-frame is correct
         if (address != ADDRESS_TX_SEND) {
             printf(FAINT "Received an I-frame with errors.");
+            ++ll->numFramesRejected;
+
             continue;
         }
 
@@ -504,6 +523,7 @@ int llRead(LinkLayer *ll, byte_t *packet) {
             default:
                 printf(FAINT "Received an I-frame with errors.");
                 control = CONTROL_REJ0 | ll->sequenceNum;
+                ++ll->numFramesRejected;
 
                 break;
         }
@@ -513,6 +533,8 @@ int llRead(LinkLayer *ll, byte_t *packet) {
             printf(FAINT "Failed to send the UA frame.");
             done = FALSE;
         }
+
+        ll->numFramesRetransmitted += retransmission;
     }
 
     // verify if a timeout occurred
@@ -534,7 +556,8 @@ int llClose(LinkLayer *ll, int showStatistics){
             printf(" Trying again..." RESET "\n");
         }
 
-        byte_t address, control;
+        unsigned char address, control;
+        _Bool retransmission = (attempt > 0);
 
         if (ll->isSender) {
             // send the DISC frame
@@ -542,6 +565,8 @@ int llClose(LinkLayer *ll, int showStatistics){
                 printf(FAINT "Failed to send the DISC frame." RESET);
                 continue;
             }
+
+            ll->numFramesRetransmitted += retransmission;
 
             // receive the receiver's DISC frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
@@ -552,6 +577,8 @@ int llClose(LinkLayer *ll, int showStatistics){
             // ensure the receiver's DISC frame is correct
             if (address != ADDRESS_RX_SEND || control != CONTROL_DISC) {
                 printf(FAINT "Received a DISC frame with errors.");
+                ++ll->numFramesRejected;
+
                 continue;
             }
 
@@ -560,6 +587,8 @@ int llClose(LinkLayer *ll, int showStatistics){
                 printf(FAINT "Failed to send the UA frame." RESET);
                 continue;
             }
+
+            ll->numFramesRetransmitted += retransmission;
         }
         else {
             // send the DISC frame
@@ -567,6 +596,8 @@ int llClose(LinkLayer *ll, int showStatistics){
                 printf(FAINT "Failed to send the DISC frame!" RESET);
                 continue;
             }
+
+            ll->numFramesRetransmitted += retransmission;
 
             // receive the UA frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
@@ -577,6 +608,8 @@ int llClose(LinkLayer *ll, int showStatistics){
             // ensure the UA frame is correct
             if (address != ADDRESS_RX_SEND || control != CONTROL_UA) {
                 printf(FAINT "Received a UA frame with errors.");
+                ++ll->numFramesRejected;
+
                 continue;
             }
         }
