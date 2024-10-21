@@ -3,8 +3,6 @@
 
 #include <termios.h>
 
-#include "utils.h"
-
 /**
  * @brief A struct that represents the serial port.
  */

@@ -3,8 +3,6 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include "../include/link_layer.h"
@@ -513,7 +511,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
             case CONTROL_I0:
             case CONTROL_I1:
                 // verify if the data received is new
-                if ((control >> 7) == ll->sequenceNum) {
+                if (control == CONTROL_I(ll->sequenceNum)) {
                     done = TRUE;
                 }
                 else {
@@ -594,10 +592,22 @@ int llClose(LinkLayer *ll, int showStatistics){
             ll->numFramesRetransmitted += retransmission;
         }
         else {
-            // send the DISC frame
-            if (sendFrame(ll, ADDRESS_RX_SEND, CONTROL_DISC) < 0) {
-                printf(FAINT "Failed to send the DISC frame!" RESET);
-                continue;
+            // NOTE: The receiver only needs to receive the sender's DISC frame
+            // if 'showStatistics' is set to true. This is because 'showStatistics is
+            // only set to false when the sender abruptly terminates the file transferring
+            // process by sending a DISC frame before the entire file has been transferred.
+            if (showStatistics) {
+                // receive the sender's DISC frame
+                if (receiveFrame(ll, &address, &control, NULL) < 0) {
+                    printf(FAINT "Failed to receive the sender's DISC frame!" RESET);
+                    continue;
+                }
+
+                // send the DISC frame
+                if (sendFrame(ll, ADDRESS_RX_SEND, CONTROL_DISC) < 0) {
+                    printf(FAINT "Failed to send the DISC frame!" RESET);
+                    continue;
+                }
             }
 
             ll->numFramesRetransmitted += retransmission;

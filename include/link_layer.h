@@ -8,6 +8,9 @@
 
 #include "serial_port.h"
 
+/**
+ * @brief A struct that represents the Data-Link Layer.
+ */
 typedef struct {
     SerialPort *port;
     _Bool isSender;         /** indicates whether the program is the sender or receiver */
