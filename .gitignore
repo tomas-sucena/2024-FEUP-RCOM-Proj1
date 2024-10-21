@@ -1,5 +1,6 @@
 # binaries
 bin/
 
+.idea/
 .vscode/
 penguin-received.gif

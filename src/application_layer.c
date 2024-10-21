@@ -1,6 +1,5 @@
 // Application layer protocol implementation
 
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -104,7 +103,13 @@ static long readNumber(unsigned char *data, unsigned char numBytes) {
     return number;
 }
 
-static void printProgress(long numBytesTransferred, long fileSize) {
+/**
+ * @brief Displays a progress bar on the console.
+ * @param numBytesTransferred the number of data bytes that have been transferred
+ * @param fileSize the size of the file to be transferred
+ * @param eraseLine indicates if the current line should be erased before printing the progress bar
+ */
+static void printProgress(long numBytesTransferred, long fileSize, _Bool eraseLine) {
     // compute the percentage of the file that has been transferred
     double percentage = 100 * (double) numBytesTransferred / (double) fileSize;
 
@@ -112,19 +117,30 @@ static void printProgress(long numBytesTransferred, long fileSize) {
     int numFilledSpaces = (int) percentage * PROGRESS_BAR_SIZE / 100;    
 
     // initialize and fill the progress bar
-    char progressBar[PROGRESS_BAR_SIZE];
+    char progressBar[PROGRESS_BAR_SIZE + 1];
+    progressBar[PROGRESS_BAR_SIZE] = '\0';
     
     memset(progressBar, '=', numFilledSpaces * sizeof(char));
     memset(progressBar + numFilledSpaces, '-', (PROGRESS_BAR_SIZE - numFilledSpaces) * sizeof(char));
 
+    // erase the previous line, if needed
+    if (eraseLine) {
+        printf(LINE_UP ERASE_LINE);
+    }
+
     // print the progress bar
-    printf(LINE_UP ERASE_LINE "\r[%s] %.2f%% | %ld/%ld B\n",
-        progressBar, percentage, numBytesTransferred, fileSize);
+    printf("\r[%s] %.2f%% | %ld/%ld B\n", progressBar, percentage, numBytesTransferred, fileSize);
 }
 
 ////////////////////////////////////////////////
 // SENDER
 ////////////////////////////////////////////////
+/**
+ * @brief Creates a control packet and sends it via the serial port.
+ * @param app the application
+ * @param control the control byte of the control packet
+ * @return 1 on success, -1 otherwise
+ */
 static int sendControlPacket(ApplicationLayer *app, unsigned char control) {
     // compute the size of the packet
     unsigned char L_fileSize = countBytes(app->fileSize);
@@ -167,6 +183,11 @@ static int sendControlPacket(ApplicationLayer *app, unsigned char control) {
     return STATUS_ERROR;
 }
 
+/**
+ * @brief Creates a data packet and sends it via the serial port.
+ * @param app the application layer
+ * @return 1 on success, -1 otherwise
+ */
 static int sendDataPackets(ApplicationLayer *app) {
     // initialize the buffer that will store the data packets
     unsigned char *dataPacket = (unsigned char *) malloc((3 + app->dataSize) * sizeof(unsigned char));
@@ -181,8 +202,12 @@ static int sendDataPackets(ApplicationLayer *app) {
     
     // send the data packets
     int statusCode = STATUS_SUCCESS;
+    long totalBytesWritten = 0;
 
-    while (statusCode == STATUS_SUCCESS) {
+    do {
+        // print the current progress
+        printProgress(totalBytesWritten, app->fileSize, totalBytesWritten > 0);
+
         // read data from the file
         int bytesRead = (int) fread(dataPacket + 3, sizeof(unsigned char), app->dataSize, app->file);
 
@@ -196,13 +221,14 @@ static int sendDataPackets(ApplicationLayer *app) {
         dataPacket[2] = (unsigned char) (bytesRead & 0xFF); // the least significant byte of the data size
 
         // send the data via the serial port
-        int bytesWritten = llWrite(app->ll, dataPacket, 3 + bytesRead);
-
-        if (bytesWritten < 0) {
+        if (llWrite(app->ll, dataPacket, 3 + bytesRead) < 0) {
             printf(RED "Error! Failed to receive data from the serial port.\n" RESET);            
             statusCode = STATUS_ERROR;
         }
+
+        totalBytesWritten += bytesRead;
     }
+    while (statusCode == STATUS_SUCCESS);
 
     // free the buffer that stored the data packets
     free(dataPacket);
@@ -210,6 +236,11 @@ static int sendDataPackets(ApplicationLayer *app) {
     return statusCode;
 }
 
+/**
+ * @brief Sends a file via the serial port.
+ * @param app the application layer
+ * @return 1 on success, -1 otherwise
+ */
 static int sendFile(ApplicationLayer *app) {
     printf("\n> Sending '" BOLD "%s" RESET "'...\n", app->filename);
 
@@ -235,6 +266,11 @@ static int sendFile(ApplicationLayer *app) {
 ////////////////////////////////////////////////
 // RECEIVER
 ////////////////////////////////////////////////
+/**
+ * @brief Receives and parses a data packet sent via the serial port.
+ * @param app the application layer
+ * @return 1 on success, -1 otherwise
+ */
 static int receiveControlPacket(ApplicationLayer *app) {
     // receive data from the serial port
     unsigned char packet[MAX_PAYLOAD_SIZE];
@@ -305,6 +341,11 @@ static int receiveControlPacket(ApplicationLayer *app) {
     return STATUS_SUCCESS;
 }
 
+/**
+ * @brief Receives and parses a data packet sent via the serial port.
+ * @param app the application layer
+ * @return 1 on success, -1 otherwise
+ */
 static int receiveDataPackets(ApplicationLayer *app) {
     // initialize the buffer that will store the data packets
     unsigned char *dataPacket = (unsigned char *) malloc((3 + app->dataSize) * sizeof(unsigned char));
@@ -318,11 +359,9 @@ static int receiveDataPackets(ApplicationLayer *app) {
     _Bool done = FALSE;
     long totalBytesRead = 0;
 
-    putchar('\n');
-
     do {
         // print the current progress
-        printProgress(totalBytesRead, app->fileSize);
+        printProgress(totalBytesRead, app->fileSize, totalBytesRead > 0);
 
         // receive data from the serial port
         int bytesRead = llRead(app->ll, dataPacket);
@@ -366,6 +405,11 @@ static int receiveDataPackets(ApplicationLayer *app) {
         : STATUS_ERROR;
 }
 
+/**
+ * @brief Receives a file sent via the serial port.
+ * @param app the application layer
+ * @return 1 on success, -1 otherwise
+ */
 static int receiveFile(ApplicationLayer *app) {
     // receive the initial control packet
     if (receiveControlPacket(app) < 0) {
@@ -399,6 +443,17 @@ static int receiveFile(ApplicationLayer *app) {
 ////////////////////////////////////////////////
 // API
 ////////////////////////////////////////////////
+/**
+ * @brief Initializes and allocates memory for the application.
+ * @param serialPort the filename of the serial port that will be used throughout the application
+ * @param isSender indicates if the application will be the sender or the receiver
+ * @param baudRate the baud rate
+ * @param nTries the maximum number of retransmissions for a single frame
+ * @param timeout the maximum number of seconds before a timeout
+ * @param filepath the path to the file to be transferred
+ * @param dataSize the maximum number of data bytes that will be sent in each data packet
+ * @return a pointer to the application on success, NULL otherwise
+ */
 ApplicationLayer *appInit(const char *serialPort, _Bool isSender, int baudRate, int nTries, int timeout,
     const char *filepath, int dataSize) {
     // ensure that, if the program is the sender,
@@ -445,6 +500,11 @@ ApplicationLayer *appInit(const char *serialPort, _Bool isSender, int baudRate, 
     return app;
 }
 
+/**
+ * @brief Deallocates the memory occupied by the application.
+ * @param app the application layer
+ * @return 1 on success, -1 otherwise
+ */
 int appFree(ApplicationLayer *app) {
     // free the link layer
     int statusCode = llFree(app->ll);
@@ -463,6 +523,11 @@ int appFree(ApplicationLayer *app) {
     return statusCode;
 }
 
+/**
+ * @brief Runs the application.
+ * @param app the application
+ * @return 1 on success, -1 otherwise
+ */
 int appRun(ApplicationLayer *app) {
     _Bool isSender = app->ll->isSender;
 
