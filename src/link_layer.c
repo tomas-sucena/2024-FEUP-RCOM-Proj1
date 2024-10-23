@@ -53,40 +53,6 @@ static void setAlarm(int time) {
 }
 
 ////////////////////////////////////////////////
-// STATISTICS
-////////////////////////////////////////////////
-void printStatistics(LinkLayer *ll) {
-    // compute and print the time elapsed
-    struct timeval endTime;
-    gettimeofday(&endTime, NULL);
-
-    struct timeval timeElapsed;
-    timersub(&endTime, &ll->startTime, &timeElapsed);
-
-    time_t minutes = timeElapsed.tv_sec / 60;
-    time_t seconds = timeElapsed.tv_sec % 60;
-    time_t milliseconds = timeElapsed.tv_usec / 1000;
-
-    printf("  " BOLD "- Time:" RESET);
-
-    if (minutes > 0) {
-        printf(" %ldmin", minutes);
-    }
-    
-    printf(" %lds %ldms\n", seconds, milliseconds);
-
-    // print the remaining statistics
-    double FER = 100 * (double) (ll->numFramesRejected) / (double) (ll->numFramesReceived);
-
-    printf("  " BOLD "- Frames transmitted:" RESET " %d\n", ll->numFramesTransmitted);
-    printf("  " BOLD "- Frames retransmitted:" RESET " %d\n", ll->numFramesRetransmitted);
-    printf("  " BOLD "- Frames received:" RESET " %d\n", ll->numFramesReceived);
-    printf("  " BOLD "- Frames rejected:" RESET " %d\n", ll->numFramesRejected);
-    printf("  " BOLD "- Frame Error Ratio (FER):" RESET " %.2f%%\n", FER);
-    printf("  " BOLD "- Timeouts:" RESET " %d\n", ll->numTimeouts);    
-}
-
-////////////////////////////////////////////////
 // SENDER
 ////////////////////////////////////////////////
 static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control) {
@@ -94,7 +60,7 @@ static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control
     unsigned char frame[5] = {FLAG, address, control, address ^ control, FLAG};
     
     // send the frame
-    if (spWrite(ll->port, frame, 5) < 5) {
+    if (spWrite(ll->sp, frame, 5) < 5) {
         return STATUS_ERROR;
     }
 
@@ -150,7 +116,7 @@ static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned ch
     frame[index++] = FLAG;
 
     // send the frame
-    if (spWrite(ll->port, frame, index) < 0) {
+    if (spWrite(ll->sp, frame, index) < 0) {
         return STATUS_ERROR;
     }
 
@@ -181,7 +147,7 @@ static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
     // receive the remaining data bytes
     while (alarmIsEnabled) {
         // ensure there were no errors reading the byte
-        if (spRead(ll->port, &byte) < 0) {
+        if (spRead(ll->sp, &byte) < 0) {
             continue;
         }
 
@@ -226,7 +192,7 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
         unsigned char byte;
         
         // ensure there were no errors reading the byte
-        if (spRead(ll->port, &byte) <= 0) {
+        if (spRead(ll->sp, &byte) <= 0) {
             continue;
         }
 
@@ -308,7 +274,7 @@ LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int numR
     // initialize the link layer
     LinkLayer *ll = malloc(sizeof(LinkLayer));
 
-    ll->port = port;
+    ll->sp = port;
     ll->isSender = isSender;
     ll->numRetransmissions = numRetransmissions;
     ll->timeout = timeout;
@@ -323,7 +289,7 @@ LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int numR
 
 int llFree(LinkLayer *ll) {
     // free the serial port
-    int statusCode = spFree(ll->port);
+    int statusCode = spFree(ll->sp);
     
     free(ll);
     return statusCode;
@@ -636,9 +602,43 @@ int llClose(LinkLayer *ll, int showStatistics){
         return STATUS_ERROR;
     }
 
-    if (showStatistics) {
-        printStatistics(ll);
-    }
-
     return STATUS_SUCCESS;
+}
+
+void llPrintStatistics(LinkLayer *ll, long fileSize) {
+    // compute and print the time elapsed
+    struct timeval endTime;
+    gettimeofday(&endTime, NULL);
+
+    struct timeval timeElapsed;
+    timersub(&endTime, &ll->startTime, &timeElapsed);
+
+    time_t minutes = timeElapsed.tv_sec / 60;
+    time_t seconds = timeElapsed.tv_sec % 60;
+    time_t milliseconds = timeElapsed.tv_usec / 1000;
+
+    printf("  " BOLD "- Time:" RESET);
+
+    if (minutes > 0) {
+        printf(" %ldmin", minutes);
+    }
+    
+    printf(" %lds %ldms\n", seconds, milliseconds);
+
+    // print the remaining statistics
+    double FER = (double) (ll->numFramesRetransmitted + ll->numFramesRejected)
+                 / (double) (ll->numFramesTransmitted + ll->numFramesReceived);
+
+    double capacity = (double) (fileSize * 8)                              // the number of data bits transferred
+                      / ((double) seconds + (double) milliseconds / 1000); // the number of seconds it took to transfer the data bits
+    double efficiency = capacity / (double) ll->sp->baudRate;
+
+    printf("  " BOLD "- Frames transmitted:" RESET " %d\n", ll->numFramesTransmitted);
+    printf("  " BOLD "- Frames retransmitted:" RESET " %d\n", ll->numFramesRetransmitted);
+    printf("  " BOLD "- Frames received:" RESET " %d\n", ll->numFramesReceived);
+    printf("  " BOLD "- Frames rejected:" RESET " %d\n", ll->numFramesRejected);
+    printf("  " BOLD "- Frame Error Ratio (FER):" RESET " %.2f%%\n", 100 * FER);
+    printf("  " BOLD "- Timeouts:" RESET " %d\n", ll->numTimeouts);
+    printf("  " BOLD "- Capacity:" RESET " %.1f bit/s\n", capacity);
+    printf("  " BOLD "- Efficiency:" RESET " %.2f%%\n", 100 * efficiency);
 }

@@ -8,6 +8,7 @@
  */
 typedef struct {
     int fd;                     /** the file descriptor of the serial port */
+    int baudRate;               /** the baud rate */
     struct termios oldSettings; /** the original serial port settings (to be restored on closing) */
 } SerialPort;
 

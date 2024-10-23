@@ -558,5 +558,10 @@ int appRun(ApplicationLayer *app) {
     }
 
     printf(GREEN "Success!\n" RESET);
+
+    // print statistics
+    printf("\n> Statistical analysis\n");
+    llPrintStatistics(app->ll, app->fileSize);
+
     return STATUS_SUCCESS;
 }

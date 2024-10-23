@@ -49,7 +49,7 @@ int main(int argc, char *argv[])
     printf("\n> Starting link-layer protocol application\n"
            BOLD "  - Serial port:" RESET " %s\n"
            BOLD "  - Role:" RESET " %s\n"
-           BOLD "  - Baudrate:" RESET " %d Hz\n"
+           BOLD "  - Baudrate:" RESET " %d bit/s\n"
            BOLD "  - Number of tries:" RESET " %d\n"
            BOLD "  - Timeout:" RESET " %ds\n"
            BOLD "  - File:" RESET " %s\n",

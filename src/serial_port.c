@@ -108,12 +108,13 @@ SerialPort *spInit(const char *filename, int baudRate) {
     }
 
     // initialize the serial port
-    SerialPort *port = malloc(sizeof(SerialPort));
+    SerialPort *sp = malloc(sizeof(SerialPort));
 
-    port->fd = fd;
-    port->oldSettings = oldSettings;
+    sp->fd = fd;
+    sp->baudRate = baudRate;
+    sp->oldSettings = oldSettings;
 
-    return port;
+    return sp;
 }
 
 int spFree(SerialPort *port) {
