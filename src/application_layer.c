@@ -561,7 +561,7 @@ int appRun(ApplicationLayer *app) {
 
     // print statistics
     printf("\n> Statistical analysis\n");
-    llPrintStatistics(app->ll, app->fileSize);
+    llPrintStatistics(app->ll);
 
     return STATUS_SUCCESS;
 }

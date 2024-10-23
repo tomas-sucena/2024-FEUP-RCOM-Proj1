@@ -64,7 +64,7 @@ static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control
         return STATUS_ERROR;
     }
 
-    ++ll->numFramesTransmitted;
+    ++ll->framesTransmitted;
     return STATUS_SUCCESS;
 }
 
@@ -121,7 +121,7 @@ static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned ch
     }
 
     free(frame);
-    ++ll->numFramesTransmitted;
+    ++ll->framesTransmitted;
 
     return STATUS_SUCCESS;
 }
@@ -236,7 +236,7 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
                 // verify if the current byte is the flag, that is,
                 // if we have reached the end of the frame
                 if (byte == FLAG) {
-                    ++ll->numFramesReceived;
+                    ++ll->framesReceived;
                     return STATUS_SUCCESS;
                 }
 
@@ -245,7 +245,7 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
                 int bytesRead = receiveData(ll, data, byte);
 
                 if (bytesRead > 0) {
-                    ++ll->numFramesReceived;
+                    ++ll->framesReceived;
                     return bytesRead;
                 }
                 
@@ -256,14 +256,14 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
         }
     }
 
-    ++ll->numTimeouts;
+    ++ll->timeouts;
     return STATUS_ERROR; // a timeout occurred
 }
 
 ////////////////////////////////////////////////
 // API
 ////////////////////////////////////////////////
-LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int numRetransmissions, int timeout) {
+LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int maxRetransmissions, int timeout) {
     // open the serial port
     SerialPort *port = spInit(serialPort, baudRate);
 
@@ -276,13 +276,15 @@ LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int numR
 
     ll->sp = port;
     ll->isSender = isSender;
-    ll->numRetransmissions = numRetransmissions;
+    ll->maxRetransmissions = maxRetransmissions;
     ll->timeout = timeout;
     ll->sequenceNum = 0;
     
     gettimeofday(&ll->startTime, NULL);
-    ll->numFramesTransmitted = 0;
-    ll->numFramesReceived = 0;
+    ll->framesTransmitted = 0;
+    ll->framesReceived = 0;
+    ll->timeouts = 0;
+    ll->dataBytesTransferred = 0;
 
     return ll;
 }
@@ -299,7 +301,7 @@ int llOpen(LinkLayer *ll) {
     // establish communication with the other PC
     _Bool done = FALSE;
 
-    for (int attempt = 0; !done && attempt < ll->numRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < ll->maxRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(" Trying again..." RESET "\n");
         }
@@ -314,7 +316,7 @@ int llOpen(LinkLayer *ll) {
                 continue;
             }
 
-            ll->numFramesRetransmitted += retransmission;
+            ll->framesRetransmitted += retransmission;
 
             // receive the UA frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
@@ -325,7 +327,7 @@ int llOpen(LinkLayer *ll) {
             // ensure the UA frame is correct
             if (address != ADDRESS_TX_SEND || control != CONTROL_UA) {
                 printf(FAINT "Received a UA frame with errors.");
-                ++ll->numFramesRejected;
+                ++ll->framesRejected;
 
                 continue;
             }
@@ -340,7 +342,7 @@ int llOpen(LinkLayer *ll) {
             // ensure the SET frame is correct
             if (address != ADDRESS_TX_SEND || control != CONTROL_SET) {
                 printf(FAINT "Received a UA frame with errors.");
-                ++ll->numFramesRejected;
+                ++ll->framesRejected;
 
                 continue;
             }
@@ -351,7 +353,7 @@ int llOpen(LinkLayer *ll) {
                 continue;
             }
 
-            ll->numFramesRetransmitted += retransmission;
+            ll->framesRetransmitted += retransmission;
         }
 
         done = TRUE;
@@ -369,7 +371,7 @@ int llOpen(LinkLayer *ll) {
 int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
     _Bool done = FALSE;
 
-    for (int attempt = 0; !done && attempt < ll->numRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < ll->maxRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(" Trying again..." RESET "\n");
         }
@@ -383,7 +385,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
             continue;
         }
 
-        ll->numFramesRetransmitted += retransmission;
+        ll->framesRetransmitted += retransmission;
 
         // receive the UA frame
         if (receiveFrame(ll, &address, &control, NULL) < 0) {
@@ -394,7 +396,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
         // ensure the address of the UA frame is correct
         if (address != ADDRESS_TX_SEND) {
             printf(FAINT "Received a UA frame with errors.");
-            ++ll->numFramesRejected;
+            ++ll->framesRejected;
 
             continue;
         }
@@ -409,7 +411,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
                 }
                 else {
                     printf(FAINT "Received a UA frame with errors.");
-                    ++ll->numFramesRejected;
+                    ++ll->framesRejected;
                 }
 
                 break;
@@ -423,7 +425,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
 
             default:
                 printf(FAINT "Received a UA frame with errors.");
-                ++ll->numFramesRejected;
+                ++ll->framesRejected;
 
                 break;
         }
@@ -436,6 +438,8 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
     }
 
     ll->sequenceNum ^= 1; // toggle the sequence number
+    ll->dataBytesTransferred += packetSize; // update the number of data bytes written
+
     return packetSize;
 }
 
@@ -443,7 +447,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
     int bytesRead;
     _Bool done = FALSE;
 
-    for (int attempt = 0; !done && attempt < ll->numRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < ll->maxRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(" Trying again..." RESET "\n");
         }
@@ -462,7 +466,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
         // ensure the address of the I-frame is correct
         if (address != ADDRESS_TX_SEND) {
             printf(FAINT "Received an I-frame with errors.");
-            ++ll->numFramesRejected;
+            ++ll->framesRejected;
 
             continue;
         }
@@ -491,7 +495,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
                 printf(FAINT "Received an I-frame with errors.");
                 control = CONTROL_REJ(ll->sequenceNum);
 
-                ++ll->numFramesRejected;
+                ++ll->framesRejected;
                 break;
         }
 
@@ -501,7 +505,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
             done = FALSE;
         }
 
-        ll->numFramesRetransmitted += retransmission;
+        ll->framesRetransmitted += retransmission;
     }
 
     // verify if a timeout occurred
@@ -511,6 +515,8 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
     }
 
     ll->sequenceNum ^= 1; // toggle the sequence number
+    ll->dataBytesTransferred += bytesRead; // update the number of data bytes read
+
     return bytesRead;
 }
 
@@ -518,7 +524,7 @@ int llClose(LinkLayer *ll, int showStatistics){
     // end communication with the other PC
     _Bool done = FALSE;
 
-    for (int attempt = 0; !done && attempt < ll->numRetransmissions; ++attempt) {
+    for (int attempt = 0; !done && attempt < ll->maxRetransmissions; ++attempt) {
         if (attempt > 0) {
             printf(" Trying again..." RESET "\n");
         }
@@ -533,7 +539,7 @@ int llClose(LinkLayer *ll, int showStatistics){
                 continue;
             }
 
-            ll->numFramesRetransmitted += retransmission;
+            ll->framesRetransmitted += retransmission;
 
             // receive the receiver's DISC frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
@@ -544,7 +550,7 @@ int llClose(LinkLayer *ll, int showStatistics){
             // ensure the receiver's DISC frame is correct
             if (address != ADDRESS_RX_SEND || control != CONTROL_DISC) {
                 printf(FAINT "Received a DISC frame with errors.");
-                ++ll->numFramesRejected;
+                ++ll->framesRejected;
 
                 continue;
             }
@@ -555,7 +561,7 @@ int llClose(LinkLayer *ll, int showStatistics){
                 continue;
             }
 
-            ll->numFramesRetransmitted += retransmission;
+            ll->framesRetransmitted += retransmission;
         }
         else {
             // NOTE: The receiver only needs to receive the sender's DISC frame
@@ -576,7 +582,7 @@ int llClose(LinkLayer *ll, int showStatistics){
                 }
             }
 
-            ll->numFramesRetransmitted += retransmission;
+            ll->framesRetransmitted += retransmission;
 
             // receive the UA frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
@@ -587,7 +593,7 @@ int llClose(LinkLayer *ll, int showStatistics){
             // ensure the UA frame is correct
             if (address != ADDRESS_RX_SEND || control != CONTROL_UA) {
                 printf(FAINT "Received a UA frame with errors.");
-                ++ll->numFramesRejected;
+                ++ll->framesRejected;
 
                 continue;
             }
@@ -605,7 +611,7 @@ int llClose(LinkLayer *ll, int showStatistics){
     return STATUS_SUCCESS;
 }
 
-void llPrintStatistics(LinkLayer *ll, long fileSize) {
+void llPrintStatistics(LinkLayer *ll) {
     // compute and print the time elapsed
     struct timeval endTime;
     gettimeofday(&endTime, NULL);
@@ -626,19 +632,19 @@ void llPrintStatistics(LinkLayer *ll, long fileSize) {
     printf(" %lds %ldms\n", seconds, milliseconds);
 
     // print the remaining statistics
-    double FER = (double) (ll->numFramesRetransmitted + ll->numFramesRejected)
-                 / (double) (ll->numFramesTransmitted + ll->numFramesReceived);
+    double FER = (double) (ll->framesRetransmitted + ll->framesRejected)
+                 / (double) (ll->framesTransmitted + ll->framesReceived);
 
-    double capacity = (double) (fileSize * 8)                              // the number of data bits transferred
+    double capacity = (double) (ll->dataBytesTransferred * 8)              // the number of data bits transferred
                       / ((double) seconds + (double) milliseconds / 1000); // the number of seconds it took to transfer the data bits
     double efficiency = capacity / (double) ll->sp->baudRate;
 
-    printf("  " BOLD "- Frames transmitted:" RESET " %d\n", ll->numFramesTransmitted);
-    printf("  " BOLD "- Frames retransmitted:" RESET " %d\n", ll->numFramesRetransmitted);
-    printf("  " BOLD "- Frames received:" RESET " %d\n", ll->numFramesReceived);
-    printf("  " BOLD "- Frames rejected:" RESET " %d\n", ll->numFramesRejected);
+    printf("  " BOLD "- Frames transmitted:" RESET " %d\n", ll->framesTransmitted);
+    printf("  " BOLD "- Frames retransmitted:" RESET " %d\n", ll->framesRetransmitted);
+    printf("  " BOLD "- Frames received:" RESET " %d\n", ll->framesReceived);
+    printf("  " BOLD "- Frames rejected:" RESET " %d\n", ll->framesRejected);
     printf("  " BOLD "- Frame Error Ratio (FER):" RESET " %.2f%%\n", 100 * FER);
-    printf("  " BOLD "- Timeouts:" RESET " %d\n", ll->numTimeouts);
+    printf("  " BOLD "- Timeouts:" RESET " %d\n", ll->timeouts);
     printf("  " BOLD "- Capacity:" RESET " %.1f bit/s\n", capacity);
     printf("  " BOLD "- Efficiency:" RESET " %.2f%%\n", 100 * efficiency);
 }
