@@ -259,7 +259,6 @@ static int sendFile(ApplicationLayer *app) {
         return STATUS_ERROR;
     }
 
-    printf(GREEN "Success!\n" RESET);
     return STATUS_SUCCESS;
 }
 
@@ -428,9 +427,13 @@ static int receiveFile(ApplicationLayer *app) {
     }
 
     // receive the data packets
-    int statusCode = receiveDataPackets(app);
+    if (receiveDataPackets(app) < 0) {
+        return STATUS_ERROR;
+    }
 
     // close the file
+    int statusCode = STATUS_SUCCESS;
+
     if (fclose(app->file) < 0) {
         printf(RED "Error! Failed to close '" BOLD "%s" RESET "'.\n" RESET, app->filename);
         statusCode = STATUS_ERROR;
@@ -446,7 +449,7 @@ static int receiveFile(ApplicationLayer *app) {
 /**
  * @brief Initializes and allocates memory for the application.
  * @param serialPort the filename of the serial port that will be used throughout the application
- * @param isSender indicates if the application will be the sender or the receiver
+ * @param role string that denotes the role of the application (sender or receiver)
  * @param baudRate the baud rate
  * @param nTries the maximum number of retransmissions for a single frame
  * @param timeout the maximum number of seconds before a timeout
@@ -530,12 +533,19 @@ int appFree(ApplicationLayer *app) {
  * @return 1 on success, -1 otherwise
  */
 int appRun(ApplicationLayer *app) {
-    _Bool isSender = app->ll->isSender;
+    const char *otherPC;
+    const int (*transferFunction)(ApplicationLayer*);
+
+    if (app->ll->isSender) {
+        otherPC = "receiver";
+        transferFunction = sendFile;
+    }
+    else {
+        otherPC = "sender";
+        transferFunction = receiveFile;
+    }
 
     // establish communication with the other PC
-    const char *otherPC = isSender ? "receiver"
-                                   : "sender";
-
     printf("\n> Connecting to the %s...\n", otherPC);
 
     if (llOpen(app->ll) < 0) {
@@ -546,9 +556,11 @@ int appRun(ApplicationLayer *app) {
     printf(GREEN "Success!\n" RESET);
 
     // transfer the file between PCs
-    isSender
-        ? sendFile(app)
-        : receiveFile(app);
+    if (transferFunction(app) < 0) {
+        return STATUS_ERROR;
+    }
+
+    printf(GREEN "Success!\n" RESET);    
 
     // terminate the connection
     printf("\n> Disconnecting...\n");
