@@ -16,7 +16,8 @@ typedef struct {
     _Bool isSender;         /** indicates whether the program is the sender or receiver */
     int maxRetransmissions; /** the maximum number of times an individual frame can be retransmitted */
     int timeout;            /** the number of seconds of timeout */
-    _Bool sequenceNum;
+    int iFrames;            /** the number of the next I-frame to be sent/received */
+    FILE *logbook;          /** the file to which logs will be output */
 
     // for statistical purposes
     struct timeval startTime; /** the time when the program starts */
@@ -33,7 +34,7 @@ typedef struct {
 #define MAX_PAYLOAD_SIZE 1000
 
 /* API */
-LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int maxRetransmissions, int timeout);
+LinkLayer *llInit(const char *serialPort, const char *role, int baudRate, int maxRetransmissions, int timeout);
 int llFree(LinkLayer *ll);
 
 int llOpen(LinkLayer *ll);

@@ -30,15 +30,9 @@ int main(int argc, char *argv[])
     const char *filepath = (argc < 5)
         ? NULL
         : argv[4];
-
-    // validate the role
-    if (strcmp("tx", role) != 0 && strcmp("rx", role) != 0) {
-        printf(RED "Error! Role must be \"tx\" or \"rx\".\n" RESET);
-        return EXIT_FAILURE;
-    }
-
+    
     // initialize the application layer
-    ApplicationLayer *app = appInit(serialPort, (role[0] == 't'), baudrate, DEFAULT_N_TRIES, DEFAULT_TIMEOUT,
+    ApplicationLayer *app = appInit(serialPort, role, baudrate, DEFAULT_N_TRIES, DEFAULT_TIMEOUT,
         filepath, DEFAULT_DATA_SIZE);
 
     if (app == NULL) {

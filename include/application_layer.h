@@ -22,7 +22,7 @@ typedef struct {
 //   nTries: Maximum number of frame retries.
 //   timeout: Frame timeout.
 //   filename: Name of the file to send / receive.
-ApplicationLayer *appInit(const char *serialPort, _Bool isSender, int baudRate, int nTries, int timeout,
+ApplicationLayer *appInit(const char *serialPort, const char *role, int baudRate, int nTries, int timeout,
     const char *filepath, int dataSize);
 int appFree(ApplicationLayer *app);
 

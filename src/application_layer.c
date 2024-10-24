@@ -454,10 +454,19 @@ static int receiveFile(ApplicationLayer *app) {
  * @param dataSize the maximum number of data bytes that will be sent in each data packet
  * @return a pointer to the application on success, NULL otherwise
  */
-ApplicationLayer *appInit(const char *serialPort, _Bool isSender, int baudRate, int nTries, int timeout,
+ApplicationLayer *appInit(const char *serialPort, const char *role, int baudRate, int nTries, int timeout,
     const char *filepath, int dataSize) {
+    // initialize the link layer
+    LinkLayer *ll = llInit(serialPort, role, baudRate, nTries, timeout);
+
+    if (ll == NULL) {
+        return NULL;
+    }
+
     // ensure that, if the program is the sender,
     // the file to be transferred exists
+    _Bool isSender = ll->isSender;
+
     if (isSender && filepath == NULL) {
         printf(RED "Error! The sender must provide a file to be transferred.\n" RESET);
         return NULL;
@@ -474,14 +483,6 @@ ApplicationLayer *appInit(const char *serialPort, _Bool isSender, int baudRate, 
             printf(RED "Error! Could not open '" BOLD "%s" RESET RED "'.\n" RESET, filepath);
             return NULL;
         }
-    }
-
-    // initialize the link layer
-    LinkLayer *ll = llInit(serialPort, isSender, baudRate, nTries, timeout);
-
-    if (ll == NULL) {
-        fclose(file);
-        return NULL;
     }
 
     // initialize the application

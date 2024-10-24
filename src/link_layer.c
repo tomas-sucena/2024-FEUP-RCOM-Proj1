@@ -1,8 +1,11 @@
 // Link layer protocol implementation
 
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "../include/link_layer.h"
@@ -17,13 +20,13 @@
 #define CONTROL_UA      0x07
 #define CONTROL_I0      0x00
 #define CONTROL_I1      0x80
-#define CONTROL_I(n)    (n << 7)  
+#define CONTROL_I(n)    ((n & 1) << 7)  
 #define CONTROL_RR0     0xAA
 #define CONTROL_RR1     0xAB
-#define CONTROL_RR(n)   (CONTROL_RR0 | (n))  
+#define CONTROL_RR(n)   (CONTROL_RR0 | ((n) & 1))  
 #define CONTROL_REJ0    0x54
 #define CONTROL_REJ1    0x55
-#define CONTROL_REJ(n)  (CONTROL_REJ0 | (n))  
+#define CONTROL_REJ(n)  (CONTROL_REJ0 | ((n) & 1))  
 #define CONTROL_DISC    0x0B
 
 #define ESCAPE   0x7D
@@ -50,6 +53,50 @@ static void setAlarm(int time) {
     (void) signal(SIGALRM, handleAlarm);
     alarm(time);
     alarmIsEnabled = TRUE;
+}
+
+////////////////////////////////////////////////
+// LOGBOOK
+////////////////////////////////////////////////
+static void writeLogsHeader(LinkLayer *ll, const char *header) {
+    // ensure the logbook file has been properly opened
+    if (ll->logbook == NULL) {
+        return;
+    }
+
+    fprintf(ll->logbook, "\n> %s\n", header);
+}
+
+static void logEvent(LinkLayer *ll, _Bool error, const char *log, ...) {
+    // ensure the logbook file has been properly opened
+    if (ll->logbook == NULL) {
+        return;
+    }
+
+    // if the current event is an error,
+    // color the output red
+    if (error) {
+        fprintf(ll->logbook, RED);
+    }
+
+    // write the current time
+    time_t currTime = time(NULL);
+    fprintf(ll->logbook, "[%.*s] ", 24, asctime(gmtime(&currTime)));
+
+    // fetch the variadic arguments
+    va_list args;
+    va_start(args, log);
+
+    // write the log message
+    vfprintf(ll->logbook, log, args);
+    va_end(args);
+
+    if (error) {
+        fprintf(ll->logbook, RESET);
+    }
+
+    // output a new line
+    fputc('\n', ll->logbook);
 }
 
 ////////////////////////////////////////////////
@@ -263,7 +310,7 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
 ////////////////////////////////////////////////
 // API
 ////////////////////////////////////////////////
-LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int maxRetransmissions, int timeout) {
+LinkLayer *llInit(const char *serialPort, const char *role, int baudRate, int maxRetransmissions, int timeout) {
     // open the serial port
     SerialPort *port = spInit(serialPort, baudRate);
 
@@ -271,14 +318,21 @@ LinkLayer *llInit(const char *serialPort, _Bool isSender, int baudRate, int maxR
         return NULL;
     }
 
+    // validate the role
+    if (strcmp(role, "tx") != 0 && strcmp(role, "rx") != 0) {
+        printf(RED "Error! Role must be \"tx\" or \"rx\".\n" RESET);
+        return NULL;
+    }
+
     // initialize the link layer
-    LinkLayer *ll = malloc(sizeof(LinkLayer));
+    LinkLayer *ll = (LinkLayer *) malloc(sizeof(LinkLayer));
 
     ll->sp = port;
-    ll->isSender = isSender;
+    ll->isSender = (role[0] == 't');
     ll->maxRetransmissions = maxRetransmissions;
     ll->timeout = timeout;
-    ll->sequenceNum = 0;
+    ll->iFrames = 0;
+    ll->logbook = fopen(ll->isSender ? "logs_tx.txt" : "logs_rx.txt", "wb");
     
     gettimeofday(&ll->startTime, NULL);
     ll->framesTransmitted = 0;
@@ -297,74 +351,83 @@ int llFree(LinkLayer *ll) {
     return statusCode;
 }
 
+/**
+ * @brief Establishes communication with the other PC.
+ * @param ll the link layer
+ * @return 1 on success, -1 on error
+ */
 int llOpen(LinkLayer *ll) {
+    int attempt;
+
     // establish communication with the other PC
-    _Bool done = FALSE;
-
-    for (int attempt = 0; !done && attempt < ll->maxRetransmissions; ++attempt) {
-        if (attempt > 0) {
-            printf(" Trying again..." RESET "\n");
-        }
-
+    writeLogsHeader(ll, "Connecting...");
+    
+    for (attempt = 0; attempt < ll->maxRetransmissions; ++attempt) {
         _Bool retransmission = (attempt > 0);
         unsigned char address, control;
 
         if (ll->isSender) {
             // send the SET frame
             if (sendFrame(ll, ADDRESS_TX_SEND, CONTROL_SET) < 0) {
-                printf(FAINT "Failed to send the SET frame.");
+                logEvent(ll, TRUE, "Failed to send the SET frame.");
                 continue;
             }
 
+            logEvent(ll, FALSE, "Sent the SET frame.");
             ll->framesRetransmitted += retransmission;
 
             // receive the UA frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
-                printf(FAINT "Failed to receive the UA frame.");
+                logEvent(ll, TRUE, "Failed to receive the UA frame.");
                 continue;
             }
 
             // ensure the UA frame is correct
             if (address != ADDRESS_TX_SEND || control != CONTROL_UA) {
-                printf(FAINT "Received a UA frame with errors.");
+                logEvent(ll, TRUE, "Received a UA frame with errors.");
                 ++ll->framesRejected;
 
                 continue;
             }
+
+            logEvent(ll, FALSE, "Received the UA frame.");
         }
         else {
             // receive the SET frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
-                printf(FAINT "Failed to receive the SET frame.");
+                logEvent(ll, TRUE, "Failed to receive the SET frame.");
                 continue;
             }
 
             // ensure the SET frame is correct
             if (address != ADDRESS_TX_SEND || control != CONTROL_SET) {
-                printf(FAINT "Received a UA frame with errors.");
+                logEvent(ll, TRUE, "Received a UA frame with errors.");
                 ++ll->framesRejected;
 
                 continue;
             }
 
+            logEvent(ll, FALSE, "Received the SET frame.");
+
             // send the UA frame
             if (sendFrame(ll, ADDRESS_TX_SEND, CONTROL_UA) < 0) {
-                printf(FAINT "Failed to send the UA frame.");
+                logEvent(ll, TRUE, "Failed to send the UA frame.");
                 continue;
             }
 
+            logEvent(ll, FALSE, "Sent the UA frame.");
             ll->framesRetransmitted += retransmission;
         }
 
-        done = TRUE;
+        break; // exit the loop
     }
 
     // verify if a timeout occurred
-    if (!done) {
-        putchar('\n');
+    if (attempt == ll->maxRetransmissions) {
         return STATUS_ERROR;
     }
 
+    writeLogsHeader(ll, "Transferring file...");
     return STATUS_SUCCESS;
 }
 
@@ -372,30 +435,27 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
     _Bool done = FALSE;
 
     for (int attempt = 0; !done && attempt < ll->maxRetransmissions; ++attempt) {
-        if (attempt > 0) {
-            printf(" Trying again..." RESET "\n");
-        }
-
         _Bool retransmission = (attempt > 0);
         unsigned char address, control;
 
         // send the packet
-        if (sendDataFrame(ll, CONTROL_I(ll->sequenceNum), packet, packetSize) < 0) {
-            printf(FAINT "Failed to send the I-frame.");
+        if (sendDataFrame(ll, CONTROL_I(ll->iFrames), packet, packetSize) < 0) {
+            logEvent(ll, TRUE, "Failed to send I-frame #%d.", ll->iFrames);
             continue;
         }
 
+        logEvent(ll, FALSE, "Sent I-frame #%d.", ll->iFrames);
         ll->framesRetransmitted += retransmission;
 
         // receive the UA frame
         if (receiveFrame(ll, &address, &control, NULL) < 0) {
-            printf(FAINT "Failed to receive the UA frame.");
+            logEvent(ll, TRUE, "Failed to receive the UA frame.");
             continue;
         }
 
         // ensure the address of the UA frame is correct
         if (address != ADDRESS_TX_SEND) {
-            printf(FAINT "Received a UA frame with errors.");
+            logEvent(ll, TRUE, "Received a UA frame with errors.");
             ++ll->framesRejected;
 
             continue;
@@ -406,11 +466,12 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
             case CONTROL_RR0:
             case CONTROL_RR1:
                 // ensure the receiver is requesting the correct frame
-                if (control == CONTROL_RR(ll->sequenceNum ^ 1)) {
+                if (control == CONTROL_RR(ll->iFrames + 1)) {
+                    logEvent(ll, FALSE, "Received the UA frame.");
                     done = TRUE;
                 }
                 else {
-                    printf(FAINT "Received a UA frame with errors.");
+                    logEvent(ll, TRUE, "Received a UA frame with errors.");
                     ++ll->framesRejected;
                 }
 
@@ -419,12 +480,12 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
             case CONTROL_REJ0:
             case CONTROL_REJ1:
                 // ensure the receiver is rejecting the correct frame
-                if (control == CONTROL_REJ(ll->sequenceNum)) {
-                    printf(FAINT "Sent duplicate I-frame #%d.", ll->sequenceNum);
+                if (control == CONTROL_REJ(ll->iFrames)) {
+                    logEvent(ll, TRUE, "Sent duplicate I-frame #%d.", ll->iFrames);
                 }
 
             default:
-                printf(FAINT "Received a UA frame with errors.");
+                logEvent(ll, TRUE, "Received a UA frame with errors.");
                 ++ll->framesRejected;
 
                 break;
@@ -433,11 +494,10 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
 
     // verify if a timeout occurred
     if (!done) {
-        putchar('\n');
         return STATUS_ERROR;
     }
 
-    ll->sequenceNum ^= 1; // toggle the sequence number
+    ++ll->iFrames; // update the number of I-frames transmitted
     ll->dataBytesTransferred += packetSize; // update the number of data bytes written
 
     return packetSize;
@@ -448,10 +508,6 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
     _Bool done = FALSE;
 
     for (int attempt = 0; !done && attempt < ll->maxRetransmissions; ++attempt) {
-        if (attempt > 0) {
-            printf(" Trying again..." RESET "\n");
-        }
-
         _Bool retransmission = (attempt > 0);
         unsigned char address, control;
 
@@ -459,13 +515,13 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
         bytesRead = receiveFrame(ll, &address, &control, packet);
 
         if (bytesRead < 0) {
-            printf(FAINT "Failed to receive an I-frame.");
+            logEvent(ll, TRUE, "Failed to receive an I-frame.");
             continue;
         }
 
         // ensure the address of the I-frame is correct
         if (address != ADDRESS_TX_SEND) {
-            printf(FAINT "Received an I-frame with errors.");
+            logEvent(ll, TRUE, "Received an I-frame with errors.");
             ++ll->framesRejected;
 
             continue;
@@ -481,86 +537,90 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
             case CONTROL_I0:
             case CONTROL_I1:
                 // verify if the data received is new
-                if (control == CONTROL_I(ll->sequenceNum)) {
+                if (control == CONTROL_I(ll->iFrames)) {
                     done = TRUE;
                 }
                 else {
-                    printf(FAINT "Received duplicate I-frame #%d.", ll->sequenceNum ^ 1);
+                    logEvent(ll, TRUE, "Received duplicate I-frame #%d.", ll->iFrames - 1);
                 }
 
-                control = CONTROL_RR(ll->sequenceNum ^ 1);
+                control = CONTROL_RR(ll->iFrames + 1);
                 break;
 
             default:
-                printf(FAINT "Received an I-frame with errors.");
-                control = CONTROL_REJ(ll->sequenceNum);
+                logEvent(ll, TRUE, "Received an I-frame with errors.");
+                control = CONTROL_REJ(ll->iFrames);
 
                 ++ll->framesRejected;
                 break;
         }
 
+        logEvent(ll, FALSE, "Received I-frame #%d.", ll->iFrames);
+
         // send the acknowledgement frame
         if (sendFrame(ll, ADDRESS_TX_SEND, control) < 0) {
-            printf(FAINT "Failed to send the UA frame.");
+            logEvent(ll, TRUE, "Failed to send the UA frame.");
             done = FALSE;
         }
 
         ll->framesRetransmitted += retransmission;
+        logEvent(ll, FALSE, "Sent the UA frame.");
     }
 
     // verify if a timeout occurred
     if (!done) {
-        putchar('\n');
         return STATUS_ERROR;
     }
 
-    ll->sequenceNum ^= 1; // toggle the sequence number
+    ++ll->iFrames; // update the number of I-frames received
     ll->dataBytesTransferred += bytesRead; // update the number of data bytes read
 
     return bytesRead;
 }
 
 int llClose(LinkLayer *ll, int showStatistics){
+    int attempt;
+
     // end communication with the other PC
-    _Bool done = FALSE;
+    writeLogsHeader(ll, "Disconnecting...");
 
-    for (int attempt = 0; !done && attempt < ll->maxRetransmissions; ++attempt) {
-        if (attempt > 0) {
-            printf(" Trying again..." RESET "\n");
-        }
-
+    for (attempt = 0; attempt < ll->maxRetransmissions; ++attempt) {
         unsigned char address, control;
         _Bool retransmission = (attempt > 0);
 
         if (ll->isSender) {
             // send the DISC frame
             if (sendFrame(ll, ADDRESS_TX_SEND, CONTROL_DISC) < 0) {
-                printf(FAINT "Failed to send the DISC frame." RESET);
+                logEvent(ll, TRUE, "Failed to send the DISC frame.");
                 continue;
             }
 
+            logEvent(ll, FALSE, "Sent the DISC frame.");
             ll->framesRetransmitted += retransmission;
 
             // receive the receiver's DISC frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
-                printf(FAINT "Failed to receive the receiver's DISC frame." RESET);
+                logEvent(ll, TRUE, "Failed to receive the receiver's DISC frame.");
                 continue;
             }
 
             // ensure the receiver's DISC frame is correct
             if (address != ADDRESS_RX_SEND || control != CONTROL_DISC) {
-                printf(FAINT "Received a DISC frame with errors.");
+                logEvent(ll, TRUE, "Received a DISC frame with errors.");
                 ++ll->framesRejected;
 
                 continue;
             }
 
+            logEvent(ll, FALSE, "Received the sender's DISC frame.");
+
             // send the UA frame
             if (sendFrame(ll, ADDRESS_RX_SEND, CONTROL_UA) < 0) {
-                printf(FAINT "Failed to send the UA frame." RESET);
+                logEvent(ll, TRUE, "Failed to send the UA frame." RESET);
                 continue;
             }
 
+            logEvent(ll, FALSE, "Sent the UA frame.");
             ll->framesRetransmitted += retransmission;
         }
         else {
@@ -571,44 +631,54 @@ int llClose(LinkLayer *ll, int showStatistics){
             if (showStatistics) {
                 // receive the sender's DISC frame
                 if (receiveFrame(ll, &address, &control, NULL) < 0) {
-                    printf(FAINT "Failed to receive the sender's DISC frame!" RESET);
+                    logEvent(ll, TRUE, "Failed to receive the sender's DISC frame!" RESET);
                     continue;
                 }
+
+                // ensure the sender's DISC frame is correct
+                if (address != ADDRESS_TX_SEND || control != CONTROL_DISC) {
+                    logEvent(ll, TRUE, "Received a DISC frame with errors.");
+                    ++ll->framesRejected;
+
+                    continue;
+                }
+
+                logEvent(ll, FALSE, "Received the sender's DISC frame.");
 
                 // send the DISC frame
                 if (sendFrame(ll, ADDRESS_RX_SEND, CONTROL_DISC) < 0) {
-                    printf(FAINT "Failed to send the DISC frame!" RESET);
+                    logEvent(ll, TRUE, "Failed to send the DISC frame!" RESET);
                     continue;
                 }
+                
+                logEvent(ll, FALSE, "Sent the DISC frame.");
+                ll->framesRetransmitted += retransmission;
             }
-
-            ll->framesRetransmitted += retransmission;
 
             // receive the UA frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
-                printf(FAINT "Failed to receive the UA frame!" RESET);
+                logEvent(ll, TRUE, "Failed to receive the UA frame!" RESET);
                 continue;
             }
 
             // ensure the UA frame is correct
             if (address != ADDRESS_RX_SEND || control != CONTROL_UA) {
-                printf(FAINT "Received a UA frame with errors.");
+                logEvent(ll, TRUE, "Received a UA frame with errors.");
                 ++ll->framesRejected;
 
                 continue;
             }
+
+            logEvent(ll, FALSE, "Received the sender's UA frame.");
         }
 
-        done = TRUE;
+        break; // exit the loop
     }
 
     // verify if a timeout occurred
-    if (!done) {
-        putchar('\n');
-        return STATUS_ERROR;
-    }
-
-    return STATUS_SUCCESS;
+    return (attempt < ll->maxRetransmissions)
+        ? STATUS_SUCCESS
+        : STATUS_ERROR;
 }
 
 void llPrintStatistics(LinkLayer *ll) {
