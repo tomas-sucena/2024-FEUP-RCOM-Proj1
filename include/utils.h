@@ -13,12 +13,11 @@
 // colors
 #define RED     "\e[0;31m"
 #define GREEN   "\e[0;32m"
-#define YELLOW  "\e[0;33m"
 
 // character formatting
 #define RESET   "\e[0m"
 #define BOLD    "\e[1m"
-#define FAINT   "\e[2m"
+#define R_BOLD  "\e[22m"
 
 // line formatting
 #define ERASE_LINE "\e[2K"

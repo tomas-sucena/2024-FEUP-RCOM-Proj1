@@ -18,14 +18,19 @@ BAUD_RATE = 9600
 TX_FILE = penguin.gif
 RX_FILE = penguin-received.gif
 
+TX_LOGS = logs_tx.txt
+RX_LOGS = logs_rx.txt
+
 # Targets
 .PHONY: all
 all: $(BIN)/main $(BIN)/cable
 
 $(BIN)/main: main.c $(SRC)/*.c
+	@ mkdir -p $(BIN)
 	$(CC) $(CFLAGS) -o $@ $^ -I$(INCLUDE)
 
 $(BIN)/cable: $(CABLE_DIR)/cable.c
+	@ mkdir -p $(BIN)
 	$(CC) $(CFLAGS) -o $@ $^
 
 .PHONY: run_tx
@@ -46,6 +51,5 @@ check_files:
 
 .PHONY: clean
 clean:
-	rm -f $(BIN)/main
-	rm -f $(BIN)/cable
-	rm -f $(RX_FILE)
+	@ rm -rf $(BIN)
+	@ rm -f $(RX_FILE) $(TX_LOGS) $(RX_LOGS)

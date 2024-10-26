@@ -18,7 +18,7 @@ SerialPort *spInit(const char *filename, int baudRate) {
     int fd = open(filename, oflags);
     
     if (fd < 0) {
-        printf(RED "Error! Failed to open the serial port '" BOLD "%s" RESET RED "'.\n" RESET, filename);
+        printf(RED "Error! Failed to open the serial port '" BOLD "%s" R_BOLD "'.\n" RESET, filename);
         return NULL;
     }
 

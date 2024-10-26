@@ -310,6 +310,15 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
 ////////////////////////////////////////////////
 // API
 ////////////////////////////////////////////////
+/**
+ * @brief Initializes and allocates memory for the data-link layer.
+ * @param serialPort the filename of the serial port that will be used by the data-link layer
+ * @param role string that denotes the role of the application (sender or receiver)
+ * @param baudRate the number of symbols (bits) per second that can be transmitted through the serial port
+ * @param maxRetransmissions the maximum number of retransmissions for a single frame
+ * @param timeout the maximum number of seconds before a timeout occurs
+ * @return a pointer to the data-link layer on success, NULL otherwise
+ */
 LinkLayer *llInit(const char *serialPort, const char *role, int baudRate, int maxRetransmissions, int timeout) {
     // open the serial port
     SerialPort *port = spInit(serialPort, baudRate);
@@ -320,7 +329,7 @@ LinkLayer *llInit(const char *serialPort, const char *role, int baudRate, int ma
 
     // validate the role
     if (strcmp(role, "tx") != 0 && strcmp(role, "rx") != 0) {
-        printf(RED "Error! Role must be \"tx\" or \"rx\".\n" RESET);
+        printf(RED "Error! Role must be '" BOLD "tx" R_BOLD "' or '" BOLD "rx" R_BOLD "'.\n" RESET);
         return NULL;
     }
 
@@ -343,6 +352,11 @@ LinkLayer *llInit(const char *serialPort, const char *role, int baudRate, int ma
     return ll;
 }
 
+/**
+ * @brief Deallocates the memory occupied by the data-link layer.
+ * @param ll the data-link layer
+ * @return 1 on success, -1 otherwise
+ */
 int llFree(LinkLayer *ll) {
     // free the serial port
     int statusCode = spFree(ll->sp);
@@ -431,6 +445,13 @@ int llOpen(LinkLayer *ll) {
     return STATUS_SUCCESS;
 }
 
+/**
+ * @brief Sends an application packet via the serial port.
+ * @param ll the data-link layer
+ * @param packet the packet to be sent
+ * @param packetSize the number of bytes of the packet
+ * @return the number of bytes written on success, -1 otherwise
+ */
 int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
     _Bool done = FALSE;
 
@@ -503,6 +524,12 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
     return packetSize;
 }
 
+/**
+ * @brief Reads an application packet from the serial port.
+ * @param ll the data-link layer
+ * @param packet buffer which will store the packet read
+ * @return the number of bytes read on success, -1 otherwise
+ */
 int llRead(LinkLayer *ll, unsigned char *packet) {
     int bytesRead;
     _Bool done = FALSE;
@@ -563,8 +590,8 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
             done = FALSE;
         }
 
-        ll->framesRetransmitted += retransmission;
         logEvent(ll, FALSE, "Sent the UA frame.");
+        ll->framesRetransmitted += retransmission;
     }
 
     // verify if a timeout occurred
@@ -578,6 +605,12 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
     return bytesRead;
 }
 
+/**
+ * @brief Terminates the connection.
+ * @param ll the data-link layer
+ * @param showStatistics indicates whether statistics should be shown on closing
+ * @return 1 on success, -1 otherwise
+ */
 int llClose(LinkLayer *ll, int showStatistics){
     int attempt;
 

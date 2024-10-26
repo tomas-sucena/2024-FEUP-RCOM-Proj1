@@ -388,7 +388,7 @@ static int receiveDataPackets(ApplicationLayer *app) {
 
         // append the data to the file
         if (fwrite(dataPacket + 3, sizeof(unsigned char), dataSize, app->file) < dataSize) {
-            printf(RED "Error! Failed to write to '" BOLD "%s" RESET RED "'.\n" RESET, app->filename);
+            printf(RED "Error! Failed to write to '" BOLD "%s" R_BOLD "'.\n" RESET, app->filename);
             return STATUS_ERROR;
         }
 
@@ -452,7 +452,7 @@ static int receiveFile(ApplicationLayer *app) {
  * @param role string that denotes the role of the application (sender or receiver)
  * @param baudRate the baud rate
  * @param nTries the maximum number of retransmissions for a single frame
- * @param timeout the maximum number of seconds before a timeout
+ * @param timeout the maximum number of seconds before a timeout occurs
  * @param filepath the path to the file to be transferred
  * @param dataSize the maximum number of data bytes that will be sent in each data packet
  * @return a pointer to the application on success, NULL otherwise
@@ -483,7 +483,7 @@ ApplicationLayer *appInit(const char *serialPort, const char *role, int baudRate
 
         // ensure the file was properly opened
         if (file == NULL) {
-            printf(RED "Error! Could not open '" BOLD "%s" RESET RED "'.\n" RESET, filepath);
+            printf(RED "Error! Could not open '" BOLD "%s" R_BOLD "'.\n" RESET, filepath);
             return NULL;
         }
     }
