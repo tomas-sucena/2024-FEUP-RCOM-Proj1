@@ -12,15 +12,19 @@
 #define DEFAULT_TIMEOUT 4
 #define DEFAULT_DATA_SIZE 200
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     // Arguments:
     //   $1: /dev/ttySxx
     //   $2: baud rate
     //   $3: tx | rx
     //   $4: filename
     if (argc < 4) {
-        printf("Usage: %s /dev/ttySxx baudrate tx|rx filepath\n", argv[0]);
+        const char *program = argv[0];
+        printf("> Application usage\n"
+               BOLD "  - Sender:" RESET "   %s /dev/ttySxx <baud rate> tx <filepath> [data size]\n"
+               BOLD "  - Receiver:" RESET " %s /dev/ttySxx <baud rate> rx [filename]\n",
+               program, program);
+
         return EXIT_FAILURE;
     }
 
@@ -30,10 +34,13 @@ int main(int argc, char *argv[])
     const char *filepath = (argc < 5)
         ? NULL
         : argv[4];
+    const int dataSize = (argc < 6)
+        ? DEFAULT_DATA_SIZE
+        : atoi(argv[5]);
     
     // initialize the application layer
     ApplicationLayer *app = appInit(serialPort, role, baudrate, DEFAULT_N_TRIES, DEFAULT_TIMEOUT,
-        filepath, DEFAULT_DATA_SIZE);
+        filepath, dataSize);
 
     if (app == NULL) {
         return EXIT_FAILURE;
