@@ -16,7 +16,7 @@ typedef struct {
 SerialPort *spInit(const char *filename, int baudRate);
 int spFree(SerialPort *sp);
 
-int spWrite(SerialPort *sp, const unsigned char *data, int numBytes);
+int spWrite(SerialPort *sp, const unsigned char *bytes, int numBytes);
 int spRead(SerialPort *sp, unsigned char *byte);
 
 #endif // _SERIAL_PORT_H_

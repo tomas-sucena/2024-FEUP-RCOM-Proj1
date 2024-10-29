@@ -5,7 +5,6 @@
 #include <string.h>
 
 #include "../include/application_layer.h"
-#include "../include/link_layer.h"
 #include "../include/utils.h"
 
 #define CONTROL_START 1
@@ -78,8 +77,14 @@ static long getFileSize(FILE *file) {
     return fileSize;
 }
 
-static void writeNumber(unsigned char *data, long number, unsigned char numBytes) {
-    for (unsigned char index = numBytes; index > 0; ) {
+/**
+ * @brief Appends the string representation of a number to a packet.
+ * @param data the packet to where the number will be appended
+ * @param number the number
+ * @param digits the minimum number of digits needed to write the number
+ */
+static void writeNumber(unsigned char *data, long number, unsigned char digits) {
+    for (unsigned char index = digits; index > 0; ) {
         // append the least significant byte of the number
         data[--index] = (unsigned char) (number & 0xFF);
 
@@ -88,7 +93,7 @@ static void writeNumber(unsigned char *data, long number, unsigned char numBytes
     }
 }
 
-static long readNumber(unsigned char *data, unsigned char numBytes) {
+static long readNumber(const unsigned char *data, unsigned char numBytes) {
     long number = 0;
 
     for (unsigned char index = 0; index < numBytes; ++index) {
@@ -326,7 +331,7 @@ static int receiveControlPacket(ApplicationLayer *app) {
 
             // parse the maximum number of data bytes that will be sent in a data packet
             case TYPE_DATA_SIZE:
-                app->dataSize = readNumber(packet + index, L);
+                app->dataSize = (int) readNumber(packet + index, L);
                 break;
 
             default:
@@ -450,17 +455,17 @@ static int receiveFile(ApplicationLayer *app) {
  * @brief Initializes and allocates memory for the application.
  * @param serialPort the filename of the serial port that will be used throughout the application
  * @param role string that denotes the role of the application (sender or receiver)
- * @param baudRate the baud rate
- * @param nTries the maximum number of retransmissions for a single frame
+ * @param baudRate the baud rate (in bits/s) at which the serial port will transmit data
+ * @param maxRetransmissions the maximum number of retransmissions for a single frame
  * @param timeout the maximum number of seconds before a timeout occurs
  * @param filepath the path to the file to be transferred
  * @param dataSize the maximum number of data bytes that will be sent in each data packet
  * @return a pointer to the application on success, NULL otherwise
  */
-ApplicationLayer *appInit(const char *serialPort, const char *role, int baudRate, int nTries, int timeout,
-    const char *filepath, int dataSize) {
+ApplicationLayer *appInit(const char *serialPort, const char *role, int baudRate, int maxRetransmissions, int timeout,
+                          const char *filepath, int dataSize) {
     // initialize the link layer
-    LinkLayer *ll = llInit(serialPort, role, baudRate, nTries, timeout);
+    LinkLayer *ll = llInit(serialPort, role, baudRate, maxRetransmissions, timeout);
 
     if (ll == NULL) {
         return NULL;
@@ -534,7 +539,7 @@ int appFree(ApplicationLayer *app) {
  */
 int appRun(ApplicationLayer *app) {
     const char *otherPC;
-    const int (*transferFunction)(ApplicationLayer*);
+    int (*transferFunction)(ApplicationLayer*);
 
     if (app->ll->isSender) {
         otherPC = "receiver";

@@ -45,10 +45,17 @@ typedef enum {
 ////////////////////////////////////////////////
 static _Bool alarmIsEnabled; /** indicates if the alarm is activated */
 
+/**
+ * @brief Clears the boolean indicating if the alarm is activated.
+ */
 static void handleAlarm() {
     alarmIsEnabled = FALSE;
 }
 
+/**
+ * @brief Configures an alarm.
+ * @param time the number of seconds before the alarm is fired
+ */
 static void setAlarm(int time) {
     (void) signal(SIGALRM, handleAlarm);
     alarm(time);
@@ -58,16 +65,35 @@ static void setAlarm(int time) {
 ////////////////////////////////////////////////
 // LOGBOOK
 ////////////////////////////////////////////////
+/**
+ * @brief Writes a new logbook header message.
+ * @param ll the data-link layer
+ * @param header the header message
+ */
 static void writeLogsHeader(LinkLayer *ll, const char *header) {
     // ensure the logbook file has been properly opened
     if (ll->logbook == NULL) {
         return;
     }
 
-    fprintf(ll->logbook, "\n> %s\n", header);
+    // if the first character in the header is a newline,
+    // advance to the next line
+    if (header[0] == '\n') {
+        fputc('\n', ll->logbook);
+        ++header;
+    }
+
+    fprintf(ll->logbook, "> %s\n", header);
 }
 
-static void logEvent(LinkLayer *ll, _Bool error, const char *log, ...) {
+/**
+ * @brief Logs a data-link layer event by appending a descriptive message to the logbook.
+ * @param ll the data-link layer
+ * @param error indicates whether the event was an error
+ * @param message a message that describes the event to be logged
+ * @param ... variadic arguments that pertain to the event message
+ */
+static void logEvent(LinkLayer *ll, _Bool error, const char *message, ...) {
     // ensure the logbook file has been properly opened
     if (ll->logbook == NULL) {
         return;
@@ -85,10 +111,10 @@ static void logEvent(LinkLayer *ll, _Bool error, const char *log, ...) {
 
     // fetch the variadic arguments
     va_list args;
-    va_start(args, log);
+    va_start(args, message);
 
     // write the log message
-    vfprintf(ll->logbook, log, args);
+    vfprintf(ll->logbook, message, args);
     va_end(args);
 
     if (error) {
@@ -102,6 +128,16 @@ static void logEvent(LinkLayer *ll, _Bool error, const char *log, ...) {
 ////////////////////////////////////////////////
 // SENDER
 ////////////////////////////////////////////////
+/**
+ * @brief Sends a frame via the serial port.
+ *
+ * Sends a frame via the serial port.
+ * Note that this function should NOT be used to send I-frames.
+ * @param ll the data-link layer
+ * @param address the address of the frame
+ * @param control the control byte of the frame
+ * @return 1 on success, -1 otherwise
+ */
 static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control) {
     // initialize and configure the frame
     unsigned char frame[5] = {FLAG, address, control, address ^ control, FLAG};
@@ -111,10 +147,18 @@ static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control
         return STATUS_ERROR;
     }
 
-    ++ll->framesTransmitted;
+    ++ll->numFramesTransmitted;
     return STATUS_SUCCESS;
 }
 
+/**
+ * @brief Sends an I-frame via the serial port.
+ * @param ll the data-link layer
+ * @param control the control byte of the frame
+ * @param data the data to be sent in the frame
+ * @param dataSize the number of data bytes to be sent in the frame
+ * @return 1 on success, -1 otherwise
+ */
 static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned char *data, int dataSize) {
     // initialize the frame
     unsigned char *frame = (unsigned char *) malloc((7 + dataSize * 2) * sizeof(unsigned char));
@@ -168,7 +212,7 @@ static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned ch
     }
 
     free(frame);
-    ++ll->framesTransmitted;
+    ++ll->numFramesTransmitted;
 
     return STATUS_SUCCESS;
 }
@@ -176,6 +220,13 @@ static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned ch
 ////////////////////////////////////////////////
 // RECEIVER
 ////////////////////////////////////////////////
+/**
+ * @brief Reads and parses the data of an I-frame sent via the serial port.
+ * @param ll the data-link layer
+ * @param data buffer which will store the data in the I-frame
+ * @param byte the first data byte of the I-frame
+ * @return the number of data bytes read on success, -1 otherwise
+ */
 static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
     unsigned char BCC = 0;
     _Bool escape = FALSE; // indicates if the next character should be escaped
@@ -228,6 +279,14 @@ static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
     return STATUS_ERROR; // a timeout occurred
 }
 
+/**
+ * @brief Receives and parses a frame.
+ * @param ll the data-link layer
+ * @param address pointer which will store the address of the frame
+ * @param control pointer which will store the control byte of the frame
+ * @param data buffer which will store the data bytes of the frame, in case it is an I-frame
+ * @return the number of data bytes read (for I-frames) or 1 on success, -1 otherwise
+ */
 static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *control, unsigned char *data) {
     State state = STATE_START;
     unsigned char BCC;
@@ -283,8 +342,12 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
                 // verify if the current byte is the flag, that is,
                 // if we have reached the end of the frame
                 if (byte == FLAG) {
-                    ++ll->framesReceived;
+                    ++ll->numFramesReceived;
                     return STATUS_SUCCESS;
+                }
+                else if (data == NULL) {
+                    state = STATE_START;
+                    break;
                 }
 
                 // if the current byte is NOT the flag, that means
@@ -292,7 +355,7 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
                 int bytesRead = receiveData(ll, data, byte);
 
                 if (bytesRead > 0) {
-                    ++ll->framesReceived;
+                    ++ll->numFramesReceived;
                     return bytesRead;
                 }
                 
@@ -303,7 +366,7 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
         }
     }
 
-    ++ll->timeouts;
+    ++ll->numTimeouts;
     return STATUS_ERROR; // a timeout occurred
 }
 
@@ -344,10 +407,10 @@ LinkLayer *llInit(const char *serialPort, const char *role, int baudRate, int ma
     ll->logbook = fopen(ll->isSender ? "logs_tx.txt" : "logs_rx.txt", "wb");
     
     gettimeofday(&ll->startTime, NULL);
-    ll->framesTransmitted = 0;
-    ll->framesReceived = 0;
-    ll->timeouts = 0;
-    ll->dataBytesTransferred = 0;
+    ll->numFramesTransmitted = 0;
+    ll->numFramesReceived = 0;
+    ll->numTimeouts = 0;
+    ll->numDataBytesTransferred = 0;
 
     return ll;
 }
@@ -388,7 +451,7 @@ int llOpen(LinkLayer *ll) {
             }
 
             logEvent(ll, FALSE, "Sent the SET frame.");
-            ll->framesRetransmitted += retransmission;
+            ll->numFramesRetransmitted += retransmission;
 
             // receive the UA frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
@@ -399,7 +462,7 @@ int llOpen(LinkLayer *ll) {
             // ensure the UA frame is correct
             if (address != ADDRESS_TX_SEND || control != CONTROL_UA) {
                 logEvent(ll, TRUE, "Received a UA frame with errors.");
-                ++ll->framesRejected;
+                ++ll->numFramesRejected;
 
                 continue;
             }
@@ -416,7 +479,7 @@ int llOpen(LinkLayer *ll) {
             // ensure the SET frame is correct
             if (address != ADDRESS_TX_SEND || control != CONTROL_SET) {
                 logEvent(ll, TRUE, "Received a UA frame with errors.");
-                ++ll->framesRejected;
+                ++ll->numFramesRejected;
 
                 continue;
             }
@@ -430,7 +493,7 @@ int llOpen(LinkLayer *ll) {
             }
 
             logEvent(ll, FALSE, "Sent the UA frame.");
-            ll->framesRetransmitted += retransmission;
+            ll->numFramesRetransmitted += retransmission;
         }
 
         break; // exit the loop
@@ -441,7 +504,7 @@ int llOpen(LinkLayer *ll) {
         return STATUS_ERROR;
     }
 
-    writeLogsHeader(ll, "Transferring file...");
+    writeLogsHeader(ll, "\nTransferring file...");
     return STATUS_SUCCESS;
 }
 
@@ -466,7 +529,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
         }
 
         logEvent(ll, FALSE, "Sent I-frame #%d.", ll->iFrames);
-        ll->framesRetransmitted += retransmission;
+        ll->numFramesRetransmitted += retransmission;
 
         // receive the UA frame
         if (receiveFrame(ll, &address, &control, NULL) < 0) {
@@ -477,7 +540,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
         // ensure the address of the UA frame is correct
         if (address != ADDRESS_TX_SEND) {
             logEvent(ll, TRUE, "Received a UA frame with errors.");
-            ++ll->framesRejected;
+            ++ll->numFramesRejected;
 
             continue;
         }
@@ -493,7 +556,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
                 }
                 else {
                     logEvent(ll, TRUE, "Received a UA frame with errors.");
-                    ++ll->framesRejected;
+                    ++ll->numFramesRejected;
                 }
 
                 break;
@@ -507,7 +570,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
 
             default:
                 logEvent(ll, TRUE, "Received a UA frame with errors.");
-                ++ll->framesRejected;
+                ++ll->numFramesRejected;
 
                 break;
         }
@@ -519,7 +582,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
     }
 
     ++ll->iFrames; // update the number of I-frames transmitted
-    ll->dataBytesTransferred += packetSize; // update the number of data bytes written
+    ll->numDataBytesTransferred += packetSize; // update the number of data bytes written
 
     return packetSize;
 }
@@ -549,7 +612,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
         // ensure the address of the I-frame is correct
         if (address != ADDRESS_TX_SEND) {
             logEvent(ll, TRUE, "Received an I-frame with errors.");
-            ++ll->framesRejected;
+            ++ll->numFramesRejected;
 
             continue;
         }
@@ -578,7 +641,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
                 logEvent(ll, TRUE, "Received an I-frame with errors.");
                 control = CONTROL_REJ(ll->iFrames);
 
-                ++ll->framesRejected;
+                ++ll->numFramesRejected;
                 break;
         }
 
@@ -591,7 +654,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
         }
 
         logEvent(ll, FALSE, "Sent the UA frame.");
-        ll->framesRetransmitted += retransmission;
+        ll->numFramesRetransmitted += retransmission;
     }
 
     // verify if a timeout occurred
@@ -600,7 +663,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
     }
 
     ++ll->iFrames; // update the number of I-frames received
-    ll->dataBytesTransferred += bytesRead; // update the number of data bytes read
+    ll->numDataBytesTransferred += bytesRead; // update the number of data bytes read
 
     return bytesRead;
 }
@@ -611,11 +674,11 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
  * @param showStatistics indicates whether statistics should be shown on closing
  * @return 1 on success, -1 otherwise
  */
-int llClose(LinkLayer *ll, int showStatistics){
+int llClose(LinkLayer *ll, _Bool showStatistics){
     int attempt;
 
     // end communication with the other PC
-    writeLogsHeader(ll, "Disconnecting...");
+    writeLogsHeader(ll, "\nDisconnecting...");
 
     for (attempt = 0; attempt < ll->maxRetransmissions; ++attempt) {
         unsigned char address, control;
@@ -629,7 +692,7 @@ int llClose(LinkLayer *ll, int showStatistics){
             }
 
             logEvent(ll, FALSE, "Sent the DISC frame.");
-            ll->framesRetransmitted += retransmission;
+            ll->numFramesRetransmitted += retransmission;
 
             // receive the receiver's DISC frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
@@ -640,7 +703,7 @@ int llClose(LinkLayer *ll, int showStatistics){
             // ensure the receiver's DISC frame is correct
             if (address != ADDRESS_RX_SEND || control != CONTROL_DISC) {
                 logEvent(ll, TRUE, "Received a DISC frame with errors.");
-                ++ll->framesRejected;
+                ++ll->numFramesRejected;
 
                 continue;
             }
@@ -654,7 +717,7 @@ int llClose(LinkLayer *ll, int showStatistics){
             }
 
             logEvent(ll, FALSE, "Sent the UA frame.");
-            ll->framesRetransmitted += retransmission;
+            ll->numFramesRetransmitted += retransmission;
         }
         else {
             // NOTE: The receiver only needs to receive the sender's DISC frame
@@ -671,7 +734,7 @@ int llClose(LinkLayer *ll, int showStatistics){
                 // ensure the sender's DISC frame is correct
                 if (address != ADDRESS_TX_SEND || control != CONTROL_DISC) {
                     logEvent(ll, TRUE, "Received a DISC frame with errors.");
-                    ++ll->framesRejected;
+                    ++ll->numFramesRejected;
 
                     continue;
                 }
@@ -685,7 +748,7 @@ int llClose(LinkLayer *ll, int showStatistics){
                 }
                 
                 logEvent(ll, FALSE, "Sent the DISC frame.");
-                ll->framesRetransmitted += retransmission;
+                ll->numFramesRetransmitted += retransmission;
             }
 
             // receive the UA frame
@@ -697,7 +760,7 @@ int llClose(LinkLayer *ll, int showStatistics){
             // ensure the UA frame is correct
             if (address != ADDRESS_RX_SEND || control != CONTROL_UA) {
                 logEvent(ll, TRUE, "Received a UA frame with errors.");
-                ++ll->framesRejected;
+                ++ll->numFramesRejected;
 
                 continue;
             }
@@ -714,6 +777,10 @@ int llClose(LinkLayer *ll, int showStatistics){
         : STATUS_ERROR;
 }
 
+/**
+ * @brief Prints a brief statistical analysis of the file-transfer protocol.
+ * @param ll the data-link layer
+ */
 void llPrintStatistics(LinkLayer *ll) {
     // compute and print the time elapsed
     struct timeval endTime;
@@ -735,19 +802,19 @@ void llPrintStatistics(LinkLayer *ll) {
     printf(" %lds %ldms\n", seconds, milliseconds);
 
     // print the remaining statistics
-    double FER = (double) (ll->framesRetransmitted + ll->framesRejected)
-                 / (double) (ll->framesTransmitted + ll->framesReceived);
+    double FER = (double) (ll->numFramesRetransmitted + ll->numFramesRejected)
+                 / (double) (ll->numFramesTransmitted + ll->numFramesReceived);
 
-    double capacity = (double) (ll->dataBytesTransferred * 8)              // the number of data bits transferred
-                      / ((double) seconds + (double) milliseconds / 1000); // the number of seconds it took to transfer the data bits
+    double capacity = (double) (ll->numDataBytesTransferred * 8)           // the number of data bits transferred
+                      / ((double) seconds + (double) milliseconds / 1000); // the transfer time in seconds
     double efficiency = capacity / (double) ll->sp->baudRate;
 
-    printf("  " BOLD "- Frames transmitted:" RESET " %d\n", ll->framesTransmitted);
-    printf("  " BOLD "- Frames retransmitted:" RESET " %d\n", ll->framesRetransmitted);
-    printf("  " BOLD "- Frames received:" RESET " %d\n", ll->framesReceived);
-    printf("  " BOLD "- Frames rejected:" RESET " %d\n", ll->framesRejected);
+    printf("  " BOLD "- Frames transmitted:" RESET " %d\n", ll->numFramesTransmitted);
+    printf("  " BOLD "- Frames retransmitted:" RESET " %d\n", ll->numFramesRetransmitted);
+    printf("  " BOLD "- Frames received:" RESET " %d\n", ll->numFramesReceived);
+    printf("  " BOLD "- Frames rejected:" RESET " %d\n", ll->numFramesRejected);
     printf("  " BOLD "- Frame Error Ratio (FER):" RESET " %.2f%%\n", 100 * FER);
-    printf("  " BOLD "- Timeouts:" RESET " %d\n", ll->timeouts);
-    printf("  " BOLD "- Capacity:" RESET " %.1f bit/s\n", capacity);
+    printf("  " BOLD "- Timeouts:" RESET " %d\n", ll->numTimeouts);
+    printf("  " BOLD "- Capacity:" RESET " %.2f bit/s\n", capacity);
     printf("  " BOLD "- Efficiency:" RESET " %.2f%%\n", 100 * efficiency);
 }

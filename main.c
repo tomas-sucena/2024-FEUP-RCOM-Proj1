@@ -8,28 +8,35 @@
 #include "include/application_layer.h"
 #include "include/utils.h"
 
-#define DEFAULT_N_TRIES 3
-#define DEFAULT_TIMEOUT 4
+#define DEFAULT_N_TRIES   3
+#define DEFAULT_TIMEOUT   4
 #define DEFAULT_DATA_SIZE 200
 
+/**
+ * @brief The entry point of the program, where the application is run.
+ * @param argc the number of command-line arguments provided to the program
+ * @param argv the command-line arguments provided to the program
+ * @return 0 on success, non-zero otherwise
+ */
 int main(int argc, char *argv[]) {
     // Arguments:
     //   $1: /dev/ttySxx
     //   $2: baud rate
     //   $3: tx | rx
     //   $4: filename
+    //   $5: data size
     if (argc < 4) {
         const char *program = argv[0];
         printf("> Application usage\n"
                BOLD "  - Sender:" RESET "   %s /dev/ttySxx <baud rate> tx <filepath> [data size]\n"
-               BOLD "  - Receiver:" RESET " %s /dev/ttySxx <baud rate> rx [filename]\n",
+               BOLD "  - Receiver:" RESET " %s /dev/ttySxx <baud rate> rx [filepath]\n",
                program, program);
 
         return EXIT_FAILURE;
     }
 
     const char *serialPort = argv[1];
-    const int baudrate = atoi(argv[2]);
+    const int baudRate = atoi(argv[2]);
     const char *role = argv[3];
     const char *filepath = (argc < 5)
         ? NULL
@@ -39,8 +46,8 @@ int main(int argc, char *argv[]) {
         : atoi(argv[5]);
     
     // initialize the application layer
-    ApplicationLayer *app = appInit(serialPort, role, baudrate, DEFAULT_N_TRIES, DEFAULT_TIMEOUT,
-        filepath, dataSize);
+    ApplicationLayer *app = appInit(serialPort, role, baudRate, DEFAULT_N_TRIES, DEFAULT_TIMEOUT,
+                                    filepath, dataSize);
 
     if (app == NULL) {
         return EXIT_FAILURE;
@@ -56,7 +63,7 @@ int main(int argc, char *argv[]) {
            BOLD "  - File:" RESET " %s\n",
            serialPort,
            role,
-           baudrate,
+           baudRate,
            DEFAULT_N_TRIES,
            DEFAULT_TIMEOUT,
            filepath);

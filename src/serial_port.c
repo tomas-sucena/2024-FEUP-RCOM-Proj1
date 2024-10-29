@@ -11,6 +11,12 @@
 
 #define _POSIX_SOURCE 1 // POSIX compliant source
 
+/**
+ * @brief Configures and opens the serial port.
+ * @param filename the filename of the serial port
+ * @param baudRate the baud rate (in bits/s) at which the serial port will transmit data
+ * @return a pointer to the serial port on success, NULL otherwise
+ */
 SerialPort *spInit(const char *filename, int baudRate) {
     // open with O_NONBLOCK to avoid hanging when CLOCAL
     // is not yet set on the serial port (changed later)
@@ -71,7 +77,7 @@ SerialPort *spInit(const char *filename, int baudRate) {
             break;
 
         default:
-            printf(RED "Error! Unsupported baud rate (must be one of 1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600, 115200).\n" RESET);
+            printf(RED "Error! Invalid baud rate (must be one of 1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600, 115200).\n" RESET);
             return NULL;
     }
 
@@ -117,30 +123,46 @@ SerialPort *spInit(const char *filename, int baudRate) {
     return sp;
 }
 
-int spFree(SerialPort *port) {
+/**
+ * @brief Deallocates the memory occupied by the serial port.
+ * @param sp the serial port
+ * @return 1 on success, -1 otherwise
+ */
+int spFree(SerialPort *sp) {
     int statusCode = STATUS_SUCCESS;
 
     // restore the original port settings
-    if (tcsetattr(port->fd, TCSANOW, &port->oldSettings) == -1) {
+    if (tcsetattr(sp->fd, TCSANOW, &sp->oldSettings) == -1) {
         perror("tcsetattr");
         statusCode = STATUS_ERROR;
     }
 
     // close the serial port
-    if (close(port->fd) < 0) {
+    if (close(sp->fd) < 0) {
         statusCode = STATUS_ERROR;
     }
 
-    free(port);
+    free(sp);
     return statusCode;
 }
 
-int spWrite(SerialPort *port, const unsigned char *data, int numBytes) {
-    // ensure all the bytes were written to the serial port
-    return write(port->fd, data, numBytes * sizeof(unsigned char));
+/**
+ * @brief Writes a stream of bytes to the serial port.
+ * @param sp the serial port
+ * @param bytes the stream of bytes to be written
+ * @param numBytes the number of bytes to be written
+ * @return the number of bytes written on success, -1 otherwise
+ */
+int spWrite(SerialPort *sp, const unsigned char *bytes, int numBytes) {
+    return (int) write(sp->fd, bytes, numBytes * sizeof(unsigned char));
 }
 
-int spRead(SerialPort *port, unsigned char *byte) {
-    // ensure a single byte was read from the serial port
-    return read(port->fd, byte, 1);
+/**
+ * @brief Reads a single byte from the serial port.
+ * @param sp the serial port
+ * @param byte pointer which will store the byte read
+ * @return 1 on success, 0 if no byte was read, -1 otherwise
+ */
+int spRead(SerialPort *sp, unsigned char *byte) {
+    return (int) read(sp->fd, byte, 1);
 }
