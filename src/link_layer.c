@@ -352,11 +352,11 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
 
                 // if the current byte is NOT the flag, that means
                 // the frame contains data, so receive it
-                int bytesRead = receiveData(ll, data, byte);
+                int numBytesRead = receiveData(ll, data, byte);
 
-                if (bytesRead > 0) {
+                if (numBytesRead > 0) {
                     ++ll->numFramesReceived;
-                    return bytesRead;
+                    return numBytesRead;
                 }
                 
                 // NOTE: If this code is reached, that means a timeout occurred when
@@ -594,7 +594,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
  * @return the number of bytes read on success, -1 otherwise
  */
 int llRead(LinkLayer *ll, unsigned char *packet) {
-    int bytesRead;
+    int numBytesRead;
     _Bool done = FALSE;
 
     for (int attempt = 0; !done && attempt < ll->maxRetransmissions; ++attempt) {
@@ -602,9 +602,9 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
         unsigned char address, control;
 
         // receive the packet
-        bytesRead = receiveFrame(ll, &address, &control, packet);
+        numBytesRead = receiveFrame(ll, &address, &control, packet);
 
-        if (bytesRead < 0) {
+        if (numBytesRead < 0) {
             logEvent(ll, TRUE, "Failed to receive an I-frame.");
             continue;
         }
@@ -663,9 +663,9 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
     }
 
     ++ll->iFrames; // update the number of I-frames received
-    ll->numDataBytesTransferred += bytesRead; // update the number of data bytes read
+    ll->numDataBytesTransferred += numBytesRead; // update the number of data bytes read
 
-    return bytesRead;
+    return numBytesRead;
 }
 
 /**

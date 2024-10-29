@@ -214,24 +214,24 @@ static int sendDataPackets(ApplicationLayer *app) {
         printProgress(totalBytesWritten, app->fileSize, totalBytesWritten > 0);
 
         // read data from the file
-        int bytesRead = (int) fread(dataPacket + 3, sizeof(unsigned char), app->dataSize, app->file);
+        int numBytesRead = (int) fread(dataPacket + 3, sizeof(unsigned char), app->dataSize, app->file);
 
         // verify if we have reached the end of the file
-        if (bytesRead == 0) {
+        if (numBytesRead == 0) {
             break;
         }
 
         // write the number of data bytes
-        dataPacket[1] = (unsigned char) (bytesRead >> 8);   // the most significant byte of the data size
-        dataPacket[2] = (unsigned char) (bytesRead & 0xFF); // the least significant byte of the data size
+        dataPacket[1] = (unsigned char) (numBytesRead >> 8);   // the most significant byte of the data size
+        dataPacket[2] = (unsigned char) (numBytesRead & 0xFF); // the least significant byte of the data size
 
         // send the data via the serial port
-        if (llWrite(app->ll, dataPacket, 3 + bytesRead) < 0) {
+        if (llWrite(app->ll, dataPacket, 3 + numBytesRead) < 0) {
             printf(RED "Error! Failed to receive data from the serial port.\n" RESET);            
             statusCode = STATUS_ERROR;
         }
 
-        totalBytesWritten += bytesRead;
+        totalBytesWritten += numBytesRead;
     }
     while (statusCode == STATUS_SUCCESS);
 
@@ -368,9 +368,9 @@ static int receiveDataPackets(ApplicationLayer *app) {
         printProgress(totalBytesRead, app->fileSize, totalBytesRead > 0);
 
         // receive data from the serial port
-        int bytesRead = llRead(app->ll, dataPacket);
+        int numBytesRead = llRead(app->ll, dataPacket);
 
-        if (bytesRead < 0) {
+        if (numBytesRead < 0) {
             printf(RED "Error! Failed to receive data from the serial port.\n" RESET);            
             break;
         }
