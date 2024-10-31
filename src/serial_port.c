@@ -89,25 +89,16 @@ SerialPort *spInit(const char *filename, int baudRate) {
     newSettings.c_iflag = IGNPAR;
     newSettings.c_oflag = 0;
 
-    // set input mode (non-canonical, no echo,...)
+    // set input mode (non-canonical, no echo, ...)
     newSettings.c_lflag = 0;
-    newSettings.c_cc[VTIME] = 0; // Block reading
-    newSettings.c_cc[VMIN] = 1;  // Byte by byte
+    newSettings.c_cc[VTIME] = 1;
+    newSettings.c_cc[VMIN] = 0; // non-blocking read
 
     tcflush(fd, TCIOFLUSH);
 
     // set the new port settings as effective
     if (tcsetattr(fd, TCSANOW, &newSettings) < 0) {
         perror("tcsetattr");
-        close(fd);
-
-        return NULL;
-    }
-
-    // Clear O_NONBLOCK flag to ensure blocking reads
-    //oflags ^= O_NONBLOCK;
-    if (fcntl(fd, F_SETFL, oflags) == -1) {
-        perror("fcntl");
         close(fd);
 
         return NULL;
