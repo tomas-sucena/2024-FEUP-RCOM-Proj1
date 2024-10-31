@@ -41,6 +41,5 @@ int llOpen(LinkLayer *ll);
 int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize);
 int llRead(LinkLayer *ll, unsigned char *packet);
 int llClose(LinkLayer *ll, _Bool showStatistics);
-void llPrintStatistics(LinkLayer *ll);
 
 #endif // _LINK_LAYER_H_

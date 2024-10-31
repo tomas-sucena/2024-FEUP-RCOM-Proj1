@@ -63,6 +63,51 @@ static void setAlarm(int time) {
 }
 
 ////////////////////////////////////////////////
+// STATISTICS
+////////////////////////////////////////////////
+/**
+ * @brief Prints a brief statistical analysis of the file-transfer protocol.
+ * @param ll the data-link layer
+ */
+void printStatistics(LinkLayer *ll) {
+    // compute and print the time elapsed
+    struct timeval endTime;
+    gettimeofday(&endTime, NULL);
+
+    struct timeval timeElapsed;
+    timersub(&endTime, &ll->startTime, &timeElapsed);
+
+    time_t minutes = timeElapsed.tv_sec / 60;
+    time_t seconds = timeElapsed.tv_sec % 60;
+    time_t milliseconds = timeElapsed.tv_usec / 1000;
+
+    printf("  " BOLD "- Time:" RESET);
+
+    if (minutes > 0) {
+        printf(" %ldmin", minutes);
+    }
+    
+    printf(" %lds %ldms\n", seconds, milliseconds);
+
+    // print the remaining statistics
+    double FER = (double) (ll->numFramesRetransmitted + ll->numFramesRejected)
+                 / (double) (ll->numFramesTransmitted + ll->numFramesReceived);
+
+    double capacity = (double) (ll->numDataBytesTransferred * 8)           // the number of data bits transferred
+                      / ((double) seconds + (double) milliseconds / 1000); // the transfer time in seconds
+    double efficiency = capacity / (double) ll->sp->baudRate;
+
+    printf("  " BOLD "- Frames transmitted:" RESET " %d\n", ll->numFramesTransmitted);
+    printf("  " BOLD "- Frames retransmitted:" RESET " %d\n", ll->numFramesRetransmitted);
+    printf("  " BOLD "- Frames received:" RESET " %d\n", ll->numFramesReceived);
+    printf("  " BOLD "- Frames rejected:" RESET " %d\n", ll->numFramesRejected);
+    printf("  " BOLD "- Frame Error Ratio (FER):" RESET " %.2f%%\n", 100 * FER);
+    printf("  " BOLD "- Timeouts:" RESET " %d\n", ll->numTimeouts);
+    printf("  " BOLD "- Capacity:" RESET " %.2f bit/s\n", capacity);
+    printf("  " BOLD "- Efficiency:" RESET " %.2f%%\n", 100 * efficiency);
+}
+
+////////////////////////////////////////////////
 // LOGBOOK
 ////////////////////////////////////////////////
 /**
@@ -720,11 +765,10 @@ int llClose(LinkLayer *ll, _Bool showStatistics){
             ll->numFramesRetransmitted += retransmission;
         }
         else {
-            // NOTE: The receiver only needs to receive the sender's DISC frame
-            // if 'showStatistics' is set to true. This is because 'showStatistics is
-            // only set to false when the sender abruptly terminates the file transferring
-            // process by sending a DISC frame before the entire file has been transferred.
-            if (showStatistics) {
+            // NOTE: If 'showStatistics' is set to false, that means the sender requested
+            // to disconnect before the file transferring was complete. As such, the receiver
+            // has already received the sender's DISC frame, so it must not expect it again.
+            if (showStatistics || attempt > 0) {
                 // receive the sender's DISC frame
                 if (receiveFrame(ll, &address, &control, NULL) < 0) {
                     logEvent(ll, TRUE, "Failed to receive the sender's DISC frame!" RESET);
@@ -740,16 +784,16 @@ int llClose(LinkLayer *ll, _Bool showStatistics){
                 }
 
                 logEvent(ll, FALSE, "Received the sender's DISC frame.");
-
-                // send the DISC frame
-                if (sendFrame(ll, ADDRESS_RX_SEND, CONTROL_DISC) < 0) {
-                    logEvent(ll, TRUE, "Failed to send the DISC frame!" RESET);
-                    continue;
-                }
-                
-                logEvent(ll, FALSE, "Sent the DISC frame.");
-                ll->numFramesRetransmitted += retransmission;
             }
+
+            // send the DISC frame
+            if (sendFrame(ll, ADDRESS_RX_SEND, CONTROL_DISC) < 0) {
+                logEvent(ll, TRUE, "Failed to send the DISC frame!" RESET);
+                continue;
+            }
+            
+            logEvent(ll, FALSE, "Sent the DISC frame.");
+            ll->numFramesRetransmitted += retransmission;
 
             // receive the UA frame
             if (receiveFrame(ll, &address, &control, NULL) < 0) {
@@ -771,50 +815,13 @@ int llClose(LinkLayer *ll, _Bool showStatistics){
         break; // exit the loop
     }
 
+    // print statistics
+    if (showStatistics) {
+        printStatistics(ll);
+    }
+
     // verify if a timeout occurred
     return (attempt < ll->maxRetransmissions)
         ? STATUS_SUCCESS
         : STATUS_ERROR;
-}
-
-/**
- * @brief Prints a brief statistical analysis of the file-transfer protocol.
- * @param ll the data-link layer
- */
-void llPrintStatistics(LinkLayer *ll) {
-    // compute and print the time elapsed
-    struct timeval endTime;
-    gettimeofday(&endTime, NULL);
-
-    struct timeval timeElapsed;
-    timersub(&endTime, &ll->startTime, &timeElapsed);
-
-    time_t minutes = timeElapsed.tv_sec / 60;
-    time_t seconds = timeElapsed.tv_sec % 60;
-    time_t milliseconds = timeElapsed.tv_usec / 1000;
-
-    printf("  " BOLD "- Time:" RESET);
-
-    if (minutes > 0) {
-        printf(" %ldmin", minutes);
-    }
-    
-    printf(" %lds %ldms\n", seconds, milliseconds);
-
-    // print the remaining statistics
-    double FER = (double) (ll->numFramesRetransmitted + ll->numFramesRejected)
-                 / (double) (ll->numFramesTransmitted + ll->numFramesReceived);
-
-    double capacity = (double) (ll->numDataBytesTransferred * 8)           // the number of data bits transferred
-                      / ((double) seconds + (double) milliseconds / 1000); // the transfer time in seconds
-    double efficiency = capacity / (double) ll->sp->baudRate;
-
-    printf("  " BOLD "- Frames transmitted:" RESET " %d\n", ll->numFramesTransmitted);
-    printf("  " BOLD "- Frames retransmitted:" RESET " %d\n", ll->numFramesRetransmitted);
-    printf("  " BOLD "- Frames received:" RESET " %d\n", ll->numFramesReceived);
-    printf("  " BOLD "- Frames rejected:" RESET " %d\n", ll->numFramesRejected);
-    printf("  " BOLD "- Frame Error Ratio (FER):" RESET " %.2f%%\n", 100 * FER);
-    printf("  " BOLD "- Timeouts:" RESET " %d\n", ll->numTimeouts);
-    printf("  " BOLD "- Capacity:" RESET " %.2f bit/s\n", capacity);
-    printf("  " BOLD "- Efficiency:" RESET " %.2f%%\n", 100 * efficiency);
 }

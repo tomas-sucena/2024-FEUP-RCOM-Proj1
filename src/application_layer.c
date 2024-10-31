@@ -199,6 +199,8 @@ static int sendDataPackets(ApplicationLayer *app) {
 
     if (dataPacket == NULL) {
         printf(RED "Error! Failed to allocate memory for the data packets." RESET "\n");
+        llClose(app->ll, FALSE); // notify the receiver that no data will be sent
+
         return STATUS_ERROR;
     }
 
@@ -216,6 +218,15 @@ static int sendDataPackets(ApplicationLayer *app) {
         // read data from the file
         int numBytesRead = (int) fread(dataPacket + 3, sizeof(unsigned char), app->dataSize, app->file);
 
+        // ensure no errors occurred when reading from the file
+        if (ferror(app->file)) {
+            printf(RED "Error! Failed to read from '" BOLD "%s" R_BOLD "'.\n" RESET, app->filename);
+            llClose(app->ll, FALSE); // notify the receiver that no more data will be sent
+
+            statusCode = STATUS_ERROR;
+            break;
+        }
+
         // verify if we have reached the end of the file
         if (numBytesRead == 0) {
             break;
@@ -227,7 +238,7 @@ static int sendDataPackets(ApplicationLayer *app) {
 
         // send the data via the serial port
         if (llWrite(app->ll, dataPacket, 3 + numBytesRead) < 0) {
-            printf(RED "Error! Failed to receive data from the serial port.\n" RESET);            
+            printf(RED "Error! Failed to send data via the serial port.\n" RESET);            
             statusCode = STATUS_ERROR;
         }
 
@@ -371,7 +382,15 @@ static int receiveDataPackets(ApplicationLayer *app) {
         int numBytesRead = llRead(app->ll, dataPacket);
 
         if (numBytesRead < 0) {
-            printf(RED "Error! Failed to receive data from the serial port.\n" RESET);            
+            printf(RED "Error! Failed to receive data from the serial port.\n" RESET);
+            break;
+        }
+        
+        // verify if the sender requested to disconnect
+        if (numBytesRead == 0) {
+            printf(YELLOW "Warning! The sender requested to disconnect.\n" RESET);
+            llClose(app->ll, FALSE);
+
             break;
         }
 
@@ -394,7 +413,7 @@ static int receiveDataPackets(ApplicationLayer *app) {
         // append the data to the file
         if (fwrite(dataPacket + 3, sizeof(unsigned char), dataSize, app->file) < dataSize) {
             printf(RED "Error! Failed to write to '" BOLD "%s" R_BOLD "'.\n" RESET, app->filename);
-            return STATUS_ERROR;
+            break;
         }
 
         totalBytesRead += dataSize;
@@ -576,10 +595,5 @@ int appRun(ApplicationLayer *app) {
     }
 
     printf(GREEN "Success!\n" RESET);
-
-    // print statistics
-    printf("\n> Statistical analysis\n");
-    llPrintStatistics(app->ll);
-
     return STATUS_SUCCESS;
 }

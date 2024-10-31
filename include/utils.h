@@ -13,6 +13,7 @@
 // colors
 #define RED     "\e[0;31m"
 #define GREEN   "\e[0;32m"
+#define YELLOW  "\e[0;33m"
 
 // character formatting
 #define RESET   "\e[0m"
