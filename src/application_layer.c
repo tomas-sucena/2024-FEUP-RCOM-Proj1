@@ -78,31 +78,37 @@ static long getFileSize(FILE *file) {
 }
 
 /**
- * @brief Appends the string representation of a number to a packet.
- * @param data the packet to where the number will be appended
+ * @brief Appends a number to a string.
+ * @param str the string where the number will be appended
  * @param number the number
- * @param digits the minimum number of digits needed to write the number
+ * @param numDigits the minimum number of digits needed to write the number
  */
-static void writeNumber(unsigned char *data, long number, unsigned char digits) {
-    for (unsigned char index = digits; index > 0; ) {
+static void writeNumber(unsigned char *str, long number, unsigned char numDigits) {
+    for (unsigned char index = numDigits; index > 0; ) {
         // append the least significant byte of the number
-        data[--index] = (unsigned char) (number & 0xFF);
+        str[--index] = (unsigned char) (number & 0xFF);
 
         // shift the number one byte to the right
         number >>= 8;
     }
 }
 
-static long readNumber(const unsigned char *data, unsigned char numBytes) {
+/**
+ * @brief Reads a number from a string.
+ * @param str the string containing the number
+ * @param numDigits the number of digits to be read
+ * @return the number read
+ */
+static long readNumber(const unsigned char *str, unsigned char numDigits) {
     long number = 0;
 
-    for (unsigned char index = 0; index < numBytes; ++index) {
+    for (unsigned char index = 0; index < numDigits; ++index) {
         // shift the number one byte to the left
         // to make space for the next byte
         number <<= 8;
 
         // copy the byte to the least significant byte of the number
-        number |= data[index];
+        number |= str[index];
     }
 
     return number;
