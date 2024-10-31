@@ -34,7 +34,6 @@ static unsigned char countBytes(long number) {
 
 /**
  * @brief Extracts the filename from a path to a file.
- * 
  * @param filepath the path to a file
  * @return the filename
  */
@@ -60,7 +59,6 @@ static char *getFilename(const char *filepath) {
 
 /**
  * @brief Determines the size of a file
- * 
  * @param file pointer to the file
  * @return the size of the file
  */
