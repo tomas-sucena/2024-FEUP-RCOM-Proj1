@@ -19,7 +19,7 @@
 
 /**
  * @brief Returns the minimum number of bytes needed to represent a number.
- * @param number an integer
+ * @param number the number
  * @return the minimum number of bytes needed to represent the number
  */
 static unsigned char countBytes(long number) {

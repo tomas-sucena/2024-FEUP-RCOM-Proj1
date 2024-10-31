@@ -152,7 +152,7 @@ static void logEvent(LinkLayer *ll, _Bool error, const char *message, ...) {
 
     // write the current time
     time_t currTime = time(NULL);
-    fprintf(ll->logbook, "[%.*s] ", 24, asctime(gmtime(&currTime)));
+    fprintf(ll->logbook, "[%.*s] ", 24, asctime(localtime(&currTime)));
 
     // fetch the variadic arguments
     va_list args;
