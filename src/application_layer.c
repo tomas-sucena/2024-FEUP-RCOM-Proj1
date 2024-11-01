@@ -15,6 +15,7 @@
 #define TYPE_FILENAME  1
 #define TYPE_DATA_SIZE 2
 
+#define SEQUENCE_NUM_MOD  100
 #define PROGRESS_BAR_SIZE 40
 
 /**
@@ -199,7 +200,7 @@ static int sendControlPacket(ApplicationLayer *app, unsigned char control) {
  */
 static int sendDataPackets(ApplicationLayer *app) {
     // initialize the buffer that will store the data packets
-    unsigned char *dataPacket = (unsigned char *) malloc((3 + app->dataSize) * sizeof(unsigned char));
+    unsigned char *dataPacket = (unsigned char *) malloc((4 + app->dataSize) * sizeof(unsigned char));
 
     if (dataPacket == NULL) {
         printf(RED "Error! Failed to allocate memory for the data packets." RESET "\n");
@@ -214,13 +215,14 @@ static int sendDataPackets(ApplicationLayer *app) {
     // send the data packets
     int statusCode = STATUS_SUCCESS;
     long totalBytesWritten = 0;
+    unsigned char sequenceNum = 0;
 
     do {
         // print the current progress
         printProgress(totalBytesWritten, app->fileSize, totalBytesWritten > 0);
 
         // read data from the file
-        int numBytesRead = (int) fread(dataPacket + 3, sizeof(unsigned char), app->dataSize, app->file);
+        int numBytesRead = (int) fread(dataPacket + 4, sizeof(unsigned char), app->dataSize, app->file);
 
         // ensure no errors occurred when reading from the file
         if (ferror(app->file)) {
@@ -236,12 +238,15 @@ static int sendDataPackets(ApplicationLayer *app) {
             break;
         }
 
+        // write the sequence number
+        dataPacket[1] = sequenceNum++ % SEQUENCE_NUM_MOD;
+
         // write the number of data bytes
-        dataPacket[1] = (unsigned char) (numBytesRead >> 8);   // the most significant byte of the data size
-        dataPacket[2] = (unsigned char) (numBytesRead & 0xFF); // the least significant byte of the data size
+        dataPacket[2] = (unsigned char) (numBytesRead >> 8);   // the most significant byte of the data size
+        dataPacket[3] = (unsigned char) (numBytesRead & 0xFF); // the least significant byte of the data size
 
         // send the data via the serial port
-        if (llWrite(app->ll, dataPacket, 3 + numBytesRead) < 0) {
+        if (llWrite(app->ll, dataPacket, 4 + numBytesRead) < 0) {
             printf(RED "Error! Failed to send data via the serial port.\n" RESET);            
             statusCode = STATUS_ERROR;
         }
@@ -367,7 +372,7 @@ static int receiveControlPacket(ApplicationLayer *app) {
  */
 static int receiveDataPackets(ApplicationLayer *app) {
     // initialize the buffer that will store the data packets
-    unsigned char *dataPacket = (unsigned char *) malloc((3 + app->dataSize) * sizeof(unsigned char));
+    unsigned char *dataPacket = (unsigned char *) malloc((4 + app->dataSize) * sizeof(unsigned char));
     
     if (dataPacket == NULL) {
         printf(RED "Error! Failed to allocate memory for the data packets." RESET "\n");
@@ -377,6 +382,7 @@ static int receiveDataPackets(ApplicationLayer *app) {
     // receive the data packets
     _Bool done = FALSE;
     long totalBytesRead = 0;
+    unsigned char sequenceNum = 0;
 
     do {
         // print the current progress
@@ -411,11 +417,17 @@ static int receiveDataPackets(ApplicationLayer *app) {
                 continue;
         }
 
+        // ensure the sequence number is correct
+        if (dataPacket[1] != (sequenceNum++ % SEQUENCE_NUM_MOD)) {
+            printf(RED "Error! Received data packet out of order.\n" RESET);
+            break;
+        }
+
         // compute the number of data bytes received
-        int dataSize = (dataPacket[1] << 8) | dataPacket[2];
+        int dataSize = (dataPacket[2] << 8) | dataPacket[3];
 
         // append the data to the file
-        if (fwrite(dataPacket + 3, sizeof(unsigned char), dataSize, app->file) < dataSize) {
+        if (fwrite(dataPacket + 4, sizeof(unsigned char), dataSize, app->file) < dataSize) {
             printf(RED "Error! Failed to write to '" BOLD "%s" R_BOLD "'.\n" RESET, app->filename);
             break;
         }
