@@ -284,7 +284,16 @@ static int sendFile(ApplicationLayer *app) {
         return STATUS_ERROR;
     }
 
-    return STATUS_SUCCESS;
+    // close the file
+    int statusCode = STATUS_SUCCESS;
+
+    if (fclose(app->file) < 0) {
+        printf(RED "Error! Failed to close '" BOLD "%s" RESET "'.\n" RESET, app->filename);
+        statusCode = STATUS_ERROR;
+    }
+
+    app->file = NULL;
+    return statusCode;
 }
 
 ////////////////////////////////////////////////
