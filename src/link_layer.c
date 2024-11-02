@@ -323,6 +323,7 @@ static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
         }
     }
 
+    ++ll->numTimeouts;
     return STATUS_TIMEOUT; // a timeout occurred
 }
 
