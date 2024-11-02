@@ -77,7 +77,7 @@ SerialPort *spInit(const char *filename, int baudRate) {
             break;
 
         default:
-            printf(RED "Error! Invalid baud rate (must be one of 1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600, 115200).\n" RESET);
+            printf(RED "Error! Unsupported baud rate (must be 1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600, or 115200).\n" RESET);
             return NULL;
     }
 
@@ -98,7 +98,7 @@ SerialPort *spInit(const char *filename, int baudRate) {
 
     // set the new port settings as effective
     if (tcsetattr(fd, TCSANOW, &newSettings) < 0) {
-        perror("tcsetattr");
+        printf(RED "Error! Failed to configure the serial port.\n" RESET);
         close(fd);
 
         return NULL;
@@ -117,14 +117,14 @@ SerialPort *spInit(const char *filename, int baudRate) {
 /**
  * @brief Deallocates the memory occupied by the serial port.
  * @param sp the serial port
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 int spFree(SerialPort *sp) {
     int statusCode = STATUS_SUCCESS;
 
     // restore the original port settings
     if (tcsetattr(sp->fd, TCSANOW, &sp->oldSettings) == -1) {
-        perror("tcsetattr");
+        printf(RED "Error! Failed to restore the serial port settings.\n" RESET);
         statusCode = STATUS_ERROR;
     }
 
@@ -142,7 +142,7 @@ int spFree(SerialPort *sp) {
  * @param sp the serial port
  * @param bytes the stream of bytes to be written
  * @param numBytes the number of bytes to be written
- * @return the number of bytes written on success, -1 otherwise
+ * @return the number of bytes written on success, a negative value otherwise
  */
 int spWrite(SerialPort *sp, const unsigned char *bytes, int numBytes) {
     return (int) write(sp->fd, bytes, numBytes * sizeof(unsigned char));
@@ -152,7 +152,7 @@ int spWrite(SerialPort *sp, const unsigned char *bytes, int numBytes) {
  * @brief Reads a single byte from the serial port.
  * @param sp the serial port
  * @param byte pointer which will store the byte read
- * @return 1 on success, 0 if no byte was read, -1 otherwise
+ * @return 1 on success, 0 if no byte was read, a negative value otherwise
  */
 int spRead(SerialPort *sp, unsigned char *byte) {
     return (int) read(sp->fd, byte, 1);

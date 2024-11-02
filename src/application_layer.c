@@ -149,7 +149,7 @@ static void printProgress(long numBytesTransferred, long fileSize, _Bool eraseLi
  * @brief Creates a control packet and sends it via the serial port.
  * @param app the application
  * @param control the control byte of the control packet
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 static int sendControlPacket(ApplicationLayer *app, unsigned char control) {
     // compute the size of the packet
@@ -196,7 +196,7 @@ static int sendControlPacket(ApplicationLayer *app, unsigned char control) {
 /**
  * @brief Creates a data packet and sends it via the serial port.
  * @param app the application layer
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 static int sendDataPackets(ApplicationLayer *app) {
     // initialize the buffer that will store the data packets
@@ -264,7 +264,7 @@ static int sendDataPackets(ApplicationLayer *app) {
 /**
  * @brief Sends a file via the serial port.
  * @param app the application layer
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 static int sendFile(ApplicationLayer *app) {
     printf("\n> Sending '" BOLD "%s" RESET "'...\n", app->filename);
@@ -293,7 +293,7 @@ static int sendFile(ApplicationLayer *app) {
 /**
  * @brief Receives and parses a data packet sent via the serial port.
  * @param app the application layer
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 static int receiveControlPacket(ApplicationLayer *app) {
     // receive data from the serial port
@@ -368,7 +368,7 @@ static int receiveControlPacket(ApplicationLayer *app) {
 /**
  * @brief Receives and parses a data packet sent via the serial port.
  * @param app the application layer
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 static int receiveDataPackets(ApplicationLayer *app) {
     // initialize the buffer that will store the data packets
@@ -447,7 +447,7 @@ static int receiveDataPackets(ApplicationLayer *app) {
 /**
  * @brief Receives a file sent via the serial port.
  * @param app the application layer
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 static int receiveFile(ApplicationLayer *app) {
     // receive the initial control packet
@@ -547,7 +547,7 @@ ApplicationLayer *appInit(const char *serialPort, const char *role, int baudRate
 /**
  * @brief Deallocates the memory occupied by the application.
  * @param app the application layer
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 int appFree(ApplicationLayer *app) {
     // free the link layer
@@ -570,7 +570,7 @@ int appFree(ApplicationLayer *app) {
 /**
  * @brief Runs the application.
  * @param app the application
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 int appRun(ApplicationLayer *app) {
     const char *otherPC;

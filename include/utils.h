@@ -8,6 +8,7 @@
 // status codes
 #define STATUS_SUCCESS  1
 #define STATUS_ERROR   -1
+#define STATUS_TIMEOUT -2  
 
 /* CONSOLE */
 // colors

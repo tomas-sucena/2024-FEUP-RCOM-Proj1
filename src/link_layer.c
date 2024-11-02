@@ -181,7 +181,7 @@ static void logEvent(LinkLayer *ll, _Bool error, const char *message, ...) {
  * @param ll the data-link layer
  * @param address the address of the frame
  * @param control the control byte of the frame
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control) {
     // initialize and configure the frame
@@ -202,7 +202,7 @@ static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control
  * @param control the control byte of the frame
  * @param data the data to be sent in the frame
  * @param dataSize the number of data bytes to be sent in the frame
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned char *data, int dataSize) {
     // initialize the frame
@@ -270,7 +270,7 @@ static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned ch
  * @param ll the data-link layer
  * @param data buffer which will store the data in the I-frame
  * @param byte the first data byte of the I-frame
- * @return the number of data bytes read on success, -1 otherwise
+ * @return the number of data bytes read on success, a negative value otherwise
  */
 static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
     unsigned char BCC = 0;
@@ -296,6 +296,8 @@ static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
 
         switch (byte) {
             case FLAG:
+                ++ll->numFramesReceived;
+
                 // ensure the BCC is zero, as that means the data is correct
                 // NOTE: x ^ x = 0
                 return (BCC == 0)
@@ -321,7 +323,7 @@ static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
         }
     }
 
-    return STATUS_ERROR; // a timeout occurred
+    return STATUS_TIMEOUT; // a timeout occurred
 }
 
 /**
@@ -330,7 +332,7 @@ static int receiveData(LinkLayer *ll, unsigned char *data, unsigned char byte) {
  * @param address pointer which will store the address of the frame
  * @param control pointer which will store the control byte of the frame
  * @param data buffer which will store the data bytes of the frame, in case it is an I-frame
- * @return the number of data bytes read (for I-frames) or 1 on success, -1 otherwise
+ * @return the number of data bytes read (for I-frames) or 1 on success, a negative value otherwise
  */
 static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *control, unsigned char *data) {
     State state = STATE_START;
@@ -390,29 +392,19 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
                     ++ll->numFramesReceived;
                     return STATUS_SUCCESS;
                 }
-                else if (data == NULL) {
-                    state = STATE_START;
-                    break;
-                }
-
                 // if the current byte is NOT the flag, that means
                 // the frame contains data, so receive it
-                int numBytesRead = receiveData(ll, data, byte);
-
-                if (numBytesRead > 0) {
-                    ++ll->numFramesReceived;
-                    return numBytesRead;
+                else if (data) {
+                    return receiveData(ll, data, byte);
                 }
-                
-                // NOTE: If this code is reached, that means a timeout occurred when
-                // receiving data or the data itself contained errors. 
-                state = STATE_FLAG_RCV;
+
+                state = STATE_START;
                 break;
         }
     }
 
     ++ll->numTimeouts;
-    return STATUS_ERROR; // a timeout occurred
+    return STATUS_TIMEOUT; // a timeout occurred
 }
 
 ////////////////////////////////////////////////
@@ -463,7 +455,7 @@ LinkLayer *llInit(const char *serialPort, const char *role, int baudRate, int ma
 /**
  * @brief Deallocates the memory occupied by the data-link layer.
  * @param ll the data-link layer
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 int llFree(LinkLayer *ll) {
     // free the serial port
@@ -476,7 +468,7 @@ int llFree(LinkLayer *ll) {
 /**
  * @brief Establishes communication with the other PC.
  * @param ll the link layer
- * @return 1 on success, -1 on error
+ * @return 1 on success, a negative value otherwise
  */
 int llOpen(LinkLayer *ll) {
     int attempt;
@@ -546,7 +538,7 @@ int llOpen(LinkLayer *ll) {
 
     // verify if a timeout occurred
     if (attempt == ll->maxRetransmissions) {
-        return STATUS_ERROR;
+        return STATUS_TIMEOUT;
     }
 
     writeLogsHeader(ll, "\nTransferring file...");
@@ -558,13 +550,14 @@ int llOpen(LinkLayer *ll) {
  * @param ll the data-link layer
  * @param packet the packet to be sent
  * @param packetSize the number of bytes of the packet
- * @return the number of bytes written on success, -1 otherwise
+ * @return the number of bytes written on success, a negative value otherwise
  */
 int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
     _Bool done = FALSE;
+    _Bool retransmission = FALSE;
 
     for (int attempt = 0; !done && attempt < ll->maxRetransmissions; ++attempt) {
-        _Bool retransmission = (attempt > 0);
+        retransmission |= (attempt > 0);
         unsigned char address, control;
 
         // send the packet
@@ -600,8 +593,8 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
                     done = TRUE;
                 }
                 else {
-                    logEvent(ll, TRUE, "Received a UA frame with errors.");
-                    ++ll->numFramesRejected;
+                    logEvent(ll, TRUE, "Sent duplicate I-frame #%d.", ll->iFrames);
+                    --attempt; // NOTE: Retransmission requests do NOT count as an attempt.
                 }
 
                 break;
@@ -610,7 +603,10 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
             case CONTROL_REJ1:
                 // ensure the receiver is rejecting the correct frame
                 if (control == CONTROL_REJ(ll->iFrames)) {
-                    logEvent(ll, TRUE, "Sent duplicate I-frame #%d.", ll->iFrames);
+                    logEvent(ll, TRUE, "Received a retransmission request for I-frame #%d.", ll->iFrames);
+                    --attempt; // NOTE: Retransmission requests do NOT count as an attempt.
+
+                    break;
                 }
 
             default:
@@ -619,11 +615,13 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
 
                 break;
         }
+
+        retransmission = TRUE;
     }
 
     // verify if a timeout occurred
     if (!done) {
-        return STATUS_ERROR;
+        return STATUS_TIMEOUT;
     }
 
     ++ll->iFrames; // update the number of I-frames transmitted
@@ -636,7 +634,7 @@ int llWrite(LinkLayer *ll, const unsigned char *packet, int packetSize) {
  * @brief Reads an application packet from the serial port.
  * @param ll the data-link layer
  * @param packet buffer which will store the packet read
- * @return the number of bytes read on success, -1 otherwise
+ * @return the number of bytes read on success, a negative value otherwise
  */
 int llRead(LinkLayer *ll, unsigned char *packet) {
     int numBytesRead;
@@ -649,9 +647,19 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
         // receive the packet
         numBytesRead = receiveFrame(ll, &address, &control, packet);
 
-        if (numBytesRead < 0) {
-            logEvent(ll, TRUE, "Failed to receive an I-frame.");
-            continue;
+        switch (numBytesRead) {
+            // a timeout occurred
+            case STATUS_TIMEOUT:
+                logEvent(ll, TRUE, "Failed to receive an I-frame.");
+                continue;
+
+            // the data field has errors
+            case STATUS_ERROR:
+                control = STATUS_ERROR; // NOTE: Invalidating the control byte ensures
+                                        // the receiver requests a retransmission.
+
+            default:
+                break;
         }
 
         // ensure the address of the I-frame is correct
@@ -673,10 +681,12 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
             case CONTROL_I1:
                 // verify if the data received is new
                 if (control == CONTROL_I(ll->iFrames)) {
+                    logEvent(ll, FALSE, "Received I-frame #%d.", ll->iFrames);
                     done = TRUE;
                 }
                 else {
                     logEvent(ll, TRUE, "Received duplicate I-frame #%d.", ll->iFrames - 1);
+                    --attempt; // NOTE: Retransmission requests do NOT count as an attempt.
                 }
 
                 control = CONTROL_RR(ll->iFrames + 1);
@@ -687,12 +697,12 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
                 control = CONTROL_REJ(ll->iFrames);
 
                 ++ll->numFramesRejected;
+                --attempt; // NOTE: Retransmission requests do NOT count as an attempt.
+
                 break;
         }
 
-        logEvent(ll, FALSE, "Received I-frame #%d.", ll->iFrames);
-
-        // send the acknowledgement frame
+        // send the UA frame
         if (sendFrame(ll, ADDRESS_TX_SEND, control) < 0) {
             logEvent(ll, TRUE, "Failed to send the UA frame.");
             done = FALSE;
@@ -704,7 +714,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
 
     // verify if a timeout occurred
     if (!done) {
-        return STATUS_ERROR;
+        return STATUS_TIMEOUT;
     }
 
     ++ll->iFrames; // update the number of I-frames received
@@ -717,7 +727,7 @@ int llRead(LinkLayer *ll, unsigned char *packet) {
  * @brief Terminates the connection.
  * @param ll the data-link layer
  * @param showStatistics indicates whether statistics should be shown on closing
- * @return 1 on success, -1 otherwise
+ * @return 1 on success, a negative value otherwise
  */
 int llClose(LinkLayer *ll, _Bool showStatistics){
     int attempt;
@@ -823,5 +833,5 @@ int llClose(LinkLayer *ll, _Bool showStatistics){
     // verify if a timeout occurred
     return (attempt < ll->maxRetransmissions)
         ? STATUS_SUCCESS
-        : STATUS_ERROR;
+        : STATUS_TIMEOUT;
 }
