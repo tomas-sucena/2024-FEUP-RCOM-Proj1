@@ -538,7 +538,7 @@ ApplicationLayer *appInit(const char *serialPort, const char *role, int baudRate
     }
 
     // initialize the application
-    ApplicationLayer *app = (ApplicationLayer *) (sizeof(ApplicationLayer));
+    ApplicationLayer *app = (ApplicationLayer *) malloc(sizeof(ApplicationLayer));
 
     app->ll = ll;
     app->file = file;
