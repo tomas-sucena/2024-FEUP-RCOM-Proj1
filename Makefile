@@ -43,7 +43,7 @@ run_rx: $(BIN)/main
 
 .PHONY: run_cable
 run_cable: $(BIN)/cable
-	./$(BIN)/cable
+	sudo ./$(BIN)/cable
 
 .PHONY: check_files
 check_files:
