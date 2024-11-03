@@ -500,7 +500,7 @@ static int receiveFile(ApplicationLayer *app) {
  * @param serialPort the filename of the serial port that will be used throughout the application
  * @param role string that denotes the role of the application (sender or receiver)
  * @param baudRate the baud rate (in bits/s) at which the serial port will transmit data
- * @param maxRetransmissions the maximum number of retransmissions for a single frame
+ * @param maxRetransmissions the maximum number of retransmission attempts for a single frame
  * @param timeout the maximum number of seconds before a timeout occurs
  * @param filepath the path to the file to be transferred
  * @param dataSize the maximum number of data bytes that will be sent in each data packet
@@ -538,7 +538,7 @@ ApplicationLayer *appInit(const char *serialPort, const char *role, int baudRate
     }
 
     // initialize the application
-    ApplicationLayer *app = malloc(sizeof(ApplicationLayer));
+    ApplicationLayer *app = (ApplicationLayer *) (sizeof(ApplicationLayer));
 
     app->ll = ll;
     app->file = file;

@@ -105,7 +105,7 @@ SerialPort *spInit(const char *filename, int baudRate) {
     }
 
     // initialize the serial port
-    SerialPort *sp = malloc(sizeof(SerialPort));
+    SerialPort *sp = (SerialPort *) malloc(sizeof(SerialPort));
 
     sp->fd = fd;
     sp->baudRate = baudRate;

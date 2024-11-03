@@ -23,10 +23,10 @@
 #define CONTROL_I(n)    ((n & 1) << 7)  
 #define CONTROL_RR0     0xAA
 #define CONTROL_RR1     0xAB
-#define CONTROL_RR(n)   (CONTROL_RR0 | ((n) & 1))  
+#define CONTROL_RR(n)   (CONTROL_RR0 | ((n) & 1))
 #define CONTROL_REJ0    0x54
 #define CONTROL_REJ1    0x55
-#define CONTROL_REJ(n)  (CONTROL_REJ0 | ((n) & 1))  
+#define CONTROL_REJ(n)  (CONTROL_REJ0 | ((n) & 1))
 #define CONTROL_DISC    0x0B
 
 #define ESCAPE   0x7D
@@ -205,8 +205,12 @@ static int sendFrame(LinkLayer *ll, unsigned char address, unsigned char control
  * @return 1 on success, a negative value otherwise
  */
 static int sendDataFrame(LinkLayer *ll, unsigned char control, const unsigned char *data, int dataSize) {
-    // initialize the frame
+    // initialize the buffer that will store the I-frame
     unsigned char *frame = (unsigned char *) malloc((7 + dataSize * 2) * sizeof(unsigned char));
+
+    if (frame == NULL) {
+        return STATUS_ERROR;
+    }
 
     // configure the header of the frame
     frame[0] = FLAG;
@@ -416,15 +420,15 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
  * @param serialPort the filename of the serial port that will be used by the data-link layer
  * @param role string that denotes the role of the application (sender or receiver)
  * @param baudRate the number of symbols (bits) per second that can be transmitted through the serial port
- * @param maxRetransmissions the maximum number of retransmissions for a single frame
+ * @param maxRetransmissions the maximum number of retransmission attempts for a single frame
  * @param timeout the maximum number of seconds before a timeout occurs
  * @return a pointer to the data-link layer on success, NULL otherwise
  */
 LinkLayer *llInit(const char *serialPort, const char *role, int baudRate, int maxRetransmissions, int timeout) {
     // open the serial port
-    SerialPort *port = spInit(serialPort, baudRate);
+    SerialPort *sp = spInit(serialPort, baudRate);
 
-    if (port == NULL) {
+    if (sp == NULL) {
         return NULL;
     }
 
@@ -437,7 +441,7 @@ LinkLayer *llInit(const char *serialPort, const char *role, int baudRate, int ma
     // initialize the link layer
     LinkLayer *ll = (LinkLayer *) malloc(sizeof(LinkLayer));
 
-    ll->sp = port;
+    ll->sp = sp;
     ll->isSender = (role[0] == 't');
     ll->maxRetransmissions = maxRetransmissions;
     ll->timeout = timeout;
