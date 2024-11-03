@@ -768,7 +768,7 @@ int llClose(LinkLayer *ll, _Bool showStatistics){
                 continue;
             }
 
-            logEvent(ll, FALSE, "Received the sender's DISC frame.");
+            logEvent(ll, FALSE, "Received the receiver's DISC frame.");
 
             // send the UA frame
             if (sendFrame(ll, ADDRESS_RX_SEND, CONTROL_UA) < 0) {
