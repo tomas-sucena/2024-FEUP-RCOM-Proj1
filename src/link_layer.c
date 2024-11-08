@@ -349,7 +349,7 @@ static int receiveFrame(LinkLayer *ll, unsigned char *address, unsigned char *co
     while (alarmIsEnabled)  {
         unsigned char byte;
         
-        // ensure there were no errors reading the byte
+        // ensure a byte was read
         if (spRead(ll->sp, &byte) <= 0) {
             continue;
         }
