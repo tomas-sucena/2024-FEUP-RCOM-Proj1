@@ -194,7 +194,7 @@ static int sendControlPacket(ApplicationLayer *app, unsigned char control) {
 }
 
 /**
- * @brief Creates a data packet and sends it via the serial port.
+ * @brief Creates data packets and sends them via the serial port.
  * @param app the application layer
  * @return 1 on success, a negative value otherwise
  */
@@ -300,7 +300,7 @@ static int sendFile(ApplicationLayer *app) {
 // RECEIVER
 ////////////////////////////////////////////////
 /**
- * @brief Receives and parses a data packet sent via the serial port.
+ * @brief Receives and parses a control packet sent via the serial port.
  * @param app the application layer
  * @return 1 on success, a negative value otherwise
  */
@@ -375,7 +375,7 @@ static int receiveControlPacket(ApplicationLayer *app) {
 }
 
 /**
- * @brief Receives and parses a data packet sent via the serial port.
+ * @brief Receives and parses data packets sent via the serial port.
  * @param app the application layer
  * @return 1 on success, a negative value otherwise
  */
