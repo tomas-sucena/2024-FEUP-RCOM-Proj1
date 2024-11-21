@@ -521,6 +521,8 @@ ApplicationLayer *appInit(const char *serialPort, const char *role, int baudRate
 
     if (isSender && filepath == NULL) {
         printf(RED "Error! The sender must provide a file to be transferred.\n" RESET);
+        llFree(ll);
+
         return NULL;
     }
 
@@ -533,6 +535,8 @@ ApplicationLayer *appInit(const char *serialPort, const char *role, int baudRate
         // ensure the file was properly opened
         if (file == NULL) {
             printf(RED "Error! Could not open '" BOLD "%s" R_BOLD "'.\n" RESET, filepath);
+            llFree(ll);
+            
             return NULL;
         }
     }

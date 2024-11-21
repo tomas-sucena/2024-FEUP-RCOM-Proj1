@@ -435,6 +435,8 @@ LinkLayer *llInit(const char *serialPort, const char *role, int baudRate, int ma
     // validate the role
     if (strcmp(role, "tx") != 0 && strcmp(role, "rx") != 0) {
         printf(RED "Error! Role must be '" BOLD "tx" R_BOLD "' or '" BOLD "rx" R_BOLD "'.\n" RESET);
+        spFree(sp);
+
         return NULL;
     }
 
